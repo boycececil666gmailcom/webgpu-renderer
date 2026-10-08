@@ -40,6 +40,10 @@ class Window:
         print(f"[Window-Init] WebGPU Adapter: {self.adapter.summary}")
         print(f"[Window-Init] WebGPU Swapchain Format: {self.texture_format}")
 
+        # Explicitly reveal and focus window on desktop
+        glfw.show_window(self.handle)
+        glfw.focus_window(self.handle)
+
     def should_close(self) -> bool:
         return glfw.window_should_close(self.handle)
 

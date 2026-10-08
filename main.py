@@ -13,12 +13,18 @@ from engine import Camera, Config, Renderer, Shader, Window
 
 # region Main Entrypoint
 def main():
-    # 1. Require 3D model glTF file path argument
-    if len(sys.argv) < 2:
-        print("[Main-Run] Usage: python main.py <path_to_gltf_file>")
-        sys.exit(1)
+    # 1. Resolve 3D model glTF/GLB file path argument (with default fallback)
+    if len(sys.argv) > 1:
+        model_path = sys.argv[1]
+    else:
+        default_model = "gltf/mclaren_p1.glb"
+        if os.path.exists(default_model):
+            model_path = default_model
+            print(f"[Main-Run] No model argument provided. Defaulting to '{model_path}'.")
+        else:
+            print("[Main-Run] Usage: python main.py <path_to_gltf_file>")
+            sys.exit(1)
 
-    model_path = sys.argv[1]
     if not os.path.exists(model_path):
         print(f"[Main-Run] Error: Model file '{model_path}' not found.")
         sys.exit(1)
