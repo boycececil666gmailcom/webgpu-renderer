@@ -1,13 +1,12 @@
-# region Imports
 import io
 import os
 
-import glm
 import numpy as np
 import wgpu
 from pygltflib import GLTF2
 
 from engine.material import Material
+from engine.transform import compose_transform, normal_matrix
 
 # endregion
 
@@ -74,20 +73,16 @@ def extract_accessor_data(gltf: GLTF2, accessor_idx: int, base_dir: str = ".") -
     return arr.reshape((accessor.count, num_elements)) if num_elements > 1 else arr
 
 
-def get_node_transform_matrix(node) -> glm.mat4:
-    """Build local transformation matrix (glm.mat4) for a glTF Node."""
+def get_node_transform_matrix(node) -> np.ndarray:
+    """Build local transformation matrix (4x4 float32 ndarray) for a glTF Node."""
     if hasattr(node, "matrix") and node.matrix and len(node.matrix) == 16:
-        return glm.mat4(*node.matrix)
+        return np.array(node.matrix, dtype=np.float32).reshape((4, 4)).T
 
-    mat = glm.mat4(1.0)
-    if getattr(node, "translation", None):
-        mat = glm.translate(mat, glm.vec3(*node.translation))
-    if getattr(node, "rotation", None):
-        r = node.rotation
-        mat = mat * glm.mat4_cast(glm.quat(r[3], r[0], r[1], r[2]))
-    if getattr(node, "scale", None):
-        mat = glm.scale(mat, glm.vec3(*node.scale))
-    return mat
+    return compose_transform(
+        translation=getattr(node, "translation", None),
+        rotation=getattr(node, "rotation", None),
+        scale=getattr(node, "scale", None),
+    )
 
 
 # endregion
@@ -242,17 +237,17 @@ class GLTFBufferCache:
         ) or []
 
         for root_idx in scene_nodes:
-            self._traverse_node(root_idx, glm.mat4(1.0))
+            self._traverse_node(root_idx, np.eye(4, dtype=np.float32))
 
-    def _traverse_node(self, node_idx: int, parent_transform: glm.mat4) -> None:
+    def _traverse_node(self, node_idx: int, parent_transform: np.ndarray) -> None:
         node = self.gltf.nodes[node_idx]
-        world_transform = parent_transform * get_node_transform_matrix(node)
+        world_transform = parent_transform @ get_node_transform_matrix(node)
 
-        # Calculate normal matrix: transpose(inverse(mat3(world_transform)))
-        norm_mat = glm.mat4(glm.transpose(glm.inverse(glm.mat3(world_transform))))
+        # Calculate normal matrix: transpose(inverse(world_transform[:3, :3]))
+        norm_mat = normal_matrix(world_transform)
 
-        model_bytes = np.array(world_transform, dtype=np.float32).T.tobytes()
-        norm_bytes = np.array(norm_mat, dtype=np.float32).T.tobytes()
+        model_bytes = world_transform.T.tobytes()
+        norm_bytes = norm_mat.T.tobytes()
 
         buf = self.device.create_buffer_with_data(
             data=model_bytes + norm_bytes,

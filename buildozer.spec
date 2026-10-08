@@ -18,7 +18,7 @@ source.include_exts = py,png,jpg,jpeg,wgsl,gltf,glb,bin,json,env
 version = 0.1.0
 
 # Application dependencies for Android NDK compilation
-requirements = python3,pysdl2,wgpu,numpy,pillow,pygltflib,pyglm,python-dotenv
+requirements = python3,cffi,pysdl2,wgpu,numpy,pillow,pygltflib,dataclasses-json,python-dotenv
 
 # Orientation and display
 orientation = landscape

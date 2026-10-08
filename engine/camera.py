@@ -1,5 +1,7 @@
 # region Imports
-import glm
+import numpy as np
+
+from engine.transform import look_at, perspective
 
 # endregion
 
@@ -10,27 +12,39 @@ class Camera:
 
     def __init__(
         self,
-        pos: glm.vec3 = glm.vec3(0.0, 0.5, 3.5),
-        target: glm.vec3 = glm.vec3(0.0, 0.0, 0.0),
-        up: glm.vec3 = glm.vec3(0.0, 1.0, 0.0),
+        pos=None,
+        target=None,
+        up=None,
         fov: float = 45.0,
         near: float = 0.1,
         far: float = 100.0,
     ):
-        self.pos = pos
-        self.target = target
-        self.up = up
-        self.fov = fov
-        self.near = near
-        self.far = far
+        self.pos = (
+            np.array([0.0, 0.5, 3.5], dtype=np.float32)
+            if pos is None
+            else np.asarray(pos, dtype=np.float32)
+        )
+        self.target = (
+            np.array([0.0, 0.0, 0.0], dtype=np.float32)
+            if target is None
+            else np.asarray(target, dtype=np.float32)
+        )
+        self.up = (
+            np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            if up is None
+            else np.asarray(up, dtype=np.float32)
+        )
+        self.fov = float(fov)
+        self.near = float(near)
+        self.far = float(far)
 
-    def get_view_matrix(self) -> glm.mat4:
-        """Returns the View transformation matrix."""
-        return glm.lookAt(self.pos, self.target, self.up)
+    def get_view_matrix(self) -> np.ndarray:
+        """Returns the 4x4 View transformation matrix."""
+        return look_at(self.pos, self.target, self.up)
 
-    def get_projection_matrix(self, aspect_ratio: float) -> glm.mat4:
-        """Returns the Perspective Projection matrix with WebGPU [0, 1] clip space depth."""
-        return glm.perspectiveRH_ZO(glm.radians(self.fov), aspect_ratio, self.near, self.far)
+    def get_projection_matrix(self, aspect_ratio: float) -> np.ndarray:
+        """Returns the 4x4 Perspective Projection matrix for WebGPU [0, 1] clip depth."""
+        return perspective(self.fov, aspect_ratio, self.near, self.far)
 
 
 # endregion

@@ -225,15 +225,14 @@ class Renderer:
         cache = self._buffer_caches[gltf_id]
 
         # Update Frame Uniforms (View, Projection, LightDir)
-        view_mat = np.array(camera.get_view_matrix(), dtype=np.float32).T.tobytes()
-        proj_mat = np.array(
-            camera.get_projection_matrix(self.window.get_aspect()), dtype=np.float32
-        ).T.tobytes()
+        view_mat = camera.get_view_matrix().T.tobytes()
+        proj_mat = camera.get_projection_matrix(self.window.get_aspect()).T.tobytes()
+        ld = self.config.light_dir
         light_bytes = struct.pack(
-            "<3ff",
-            self.config.light_dir.x,
-            self.config.light_dir.y,
-            self.config.light_dir.z,
+            "<4f",
+            float(ld[0]),
+            float(ld[1]),
+            float(ld[2]),
             0.0,
         )
         self.device.queue.write_buffer(self.frame_buffer, 0, view_mat + proj_mat + light_bytes)

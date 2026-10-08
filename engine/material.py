@@ -1,9 +1,7 @@
-# region Imports
 import io
 import os
 import struct
 
-import glm
 import numpy as np
 import wgpu
 from PIL import Image
@@ -26,12 +24,12 @@ class Material(GLTFMaterial):
         self.has_texture = False
 
     @property
-    def base_color_vec4(self) -> glm.vec4:
+    def base_color_vec4(self) -> np.ndarray:
         pbr = self.pbrMetallicRoughness
         if pbr and pbr.baseColorFactor:
             c = pbr.baseColorFactor
-            return glm.vec4(c[0], c[1], c[2], c[3] if len(c) > 3 else 1.0)
-        return glm.vec4(1.0, 1.0, 1.0, 1.0)
+            return np.array([c[0], c[1], c[2], c[3] if len(c) > 3 else 1.0], dtype=np.float32)
+        return np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
 
     @property
     def metallic_val(self) -> float:
@@ -96,12 +94,13 @@ class Material(GLTFMaterial):
     ) -> wgpu.GPUBindGroup:
         """Retrieves or lazily instantiates the WebGPU material bind group."""
         if self._bind_group is None:
+            col = self.base_color_vec4
             raw_uniforms = struct.pack(
                 "<4f2f2I",
-                self.base_color_vec4.r,
-                self.base_color_vec4.g,
-                self.base_color_vec4.b,
-                self.base_color_vec4.a,
+                float(col[0]),
+                float(col[1]),
+                float(col[2]),
+                float(col[3]),
                 self.metallic_val,
                 self.roughness_val,
                 1 if self.has_texture else 0,
