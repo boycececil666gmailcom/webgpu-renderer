@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Repository
@@ -24,15 +24,24 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev \
+            build-essential ccache libltdl-dev
+
+      - name: Install Buildozer and Cython
+        run: |
+          pip install --upgrade pip
+          pip install buildozer cython virtualenv
+
       - name: Build Android APK with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
-        with:
-          workdir: .
-          buildozer_version: stable
+        run: |
+          buildozer -v android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: webgpurenderer-android-apk
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: bin/*.apk
