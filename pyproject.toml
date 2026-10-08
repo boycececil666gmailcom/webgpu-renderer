@@ -1,5 +1,5 @@
 [project]
-name = "pygl-renderer"
+name = "webgpu-renderer"
 version = "0.1.0"
 description = "glTF 2.0 Renderer powered by WebGPU (wgpu-py)"
 readme = "README.md"

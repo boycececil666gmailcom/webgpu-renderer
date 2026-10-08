@@ -3,7 +3,7 @@
 title = WebGPU Renderer
 
 # Package name
-package.name = pyglrenderer
+package.name = webgpurenderer
 
 # Package domain (reverse DNS format)
 package.domain = org.antigravity
