@@ -21,3 +21,8 @@ venv.bak/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Wireless debug logs
+wireless_debug/logs/*.log
+!wireless_debug/logs/.gitkeep
+
