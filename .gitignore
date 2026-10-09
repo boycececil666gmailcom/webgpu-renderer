@@ -1,36 +1,14 @@
-# Python
+target/
+**/*.rs.bk
+*.pdb
+.env.local
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
+.buildozer*
+.ruff_cache/
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
-.venv
-
-# Environment variables
-.env
-
-# IDE / System
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# Wireless debug logs
+screen.png
 wireless_debug/logs/*.log
 !wireless_debug/logs/.gitkeep
-
-# Buildozer & artifacts
-.buildozer
-.buildozer/
-pack_apk.py
-screen*.png
-*.log
-
-
+build_apk_tmp/

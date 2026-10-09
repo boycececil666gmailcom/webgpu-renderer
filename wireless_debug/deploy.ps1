@@ -66,5 +66,5 @@ Write-Host "[Deploy-Launch] Starting $Package..."
 & $Adb -s $Serial shell am start -n "$Package/$Activity" | Out-Null
 
 Write-Host "[Deploy-Launch] Streaming logs (Ctrl+C to stop)..."
-& $Adb -s $Serial logcat -v time -s python:* pythonutil:* SDL:* SDLActivity:* AndroidRuntime:* CRASH:* DEBUG:* *:F
+& $Adb -s $Serial logcat -v time -s Rust:* wgpu:* python:* pythonutil:* SDL:* SDLActivity:* AndroidRuntime:* CRASH:* DEBUG:* *:F
 #endregion

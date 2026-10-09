@@ -1,99 +1,61 @@
-# WebGPU-Renderer
+# WebGPU-Renderer (Rust)
 
-> A modular, real-time 3D rendering engine written in Python — powered by native WebGPU (wgpu-py) and the glTF 2.0 standard.
-
-![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
-![WebGPU](https://img.shields.io/badge/WebGPU-FF5722?style=flat&logo=webgpu&logoColor=white)
-![GLFW](https://img.shields.io/badge/GLFW-Window%20Manager-black?style=flat)
-![glTF](https://img.shields.io/badge/glTF%202.0-Model%20Format-green?style=flat)
-![wgpu-py](https://img.shields.io/badge/wgpu--py-GPU%20Bindings-orange?style=flat)
-![License](https://img.shields.io/badge/License-MIT-blue?style=flat)
-
-A lightweight, zero-framework 3D graphics engine that reads industry-standard glTF 2.0 model files and renders them in real time using native WebGPU render pipelines — zero game engine overhead, full pipeline control.
+A lightweight, high-performance real-time 3D rendering engine written in Rust, powered by the standard `wgpu` graphics crate, `winit`, and the glTF 2.0 specification.
 
 ---
 
-## Core Purpose & Business Value
+## Architectural Highlights
 
-WebGPU-Renderer is a ground-up, dependency-lean 3D renderer that bypasses the abstraction of high-level game engines. It is purpose-built for engineers and researchers who need precise control over every stage of the real-time rendering pipeline.
-
-- **Full Pipeline Visibility**: Every render stage — from glTF buffer parsing to GPU buffer upload, depth sorting, and WGSL shader dispatch — is explicit and inspectable. No black boxes.
-- **Industry-Standard 3D Asset Support**: Loads any conformant glTF 2.0 scene file, including meshes, PBR materials, textures, and scene hierarchies, allowing real-world assets to be visualised without conversion.
-- **Configurable Without Code Changes**: Camera position, field of view, window dimensions, target frame rate, and directional light can all be tuned via a `.env` file, making the renderer easy to embed in pipelines or demonstrations.
-- **Predictable Frame Budget**: A software frame-rate limiter caps rendering to a configurable FPS ceiling, preventing CPU/GPU spin on fast hardware and enabling repeatable performance measurements.
-- **Extensible Module Architecture**: The engine is split into focused, single-responsibility modules (`Window`, `Shader`, `Camera`, `Renderer`, `Material`, `GLTFBufferCache`) so any subsystem can be replaced or extended independently.
+- **Standard Rust WebGPU (`wgpu`)**: Built on idiomatic `wgpu` (WebGPU specification implemented in Rust), mapping directly to DirectX 12 on Windows and Vulkan on Linux and Android.
+- **Android-Ready Core Architecture**: The core rendering engine is decoupled in [`src/lib.rs`](file:///c:/Users/boyce/OneDrive/Desktop/webgpu-rust/src/lib.rs) with `crate-type = ["lib", "cdylib"]`, enabling direct desktop execution while remaining immediately portable to Android native activities.
+- **Two-Pass Real-Time Rendering**: Separates opaque and blended/masked transparent geometry passes to ensure correct depth sorting.
+- **Zero-Framework Asset Pipeline**: Native glTF 2.0 reader supporting `.glb` and `.gltf` scenes, node transform hierarchies, normal matrix generation, and PBR textures.
+- **Predictable Frame Budget**: Frame rate limiter capping CPU/GPU usage according to `TARGET_FPS`.
 
 ---
 
-## WebGPU Architecture & Hardware Compilation Stack
-
-WebGPU abstracts cross-platform hardware differences while mapping commands and WGSL shaders directly down to native platform APIs, vendor driver compilers, and physical GPU silicon:
-
-```text
-+------------------------------------------------------------------------------------------------+
-|             WebGPU End-to-End Pipeline: From Application Code to Hardware Silicon              |
-+------------------------------------------------------------------------------------------------+
-+------------------+      +------------------+      +------------------+      +------------------+
-| 1. App & Shaders |      | 2. IR Translator |      | 3. Platform API  |      | 4. GPU Hardware  |
-| Render engine    | ---> | wgpu-core / Naga | ---> | D3D12 / Vulkan   | ---> | Silicon Hardware |
-| WGSL Source Code |      | AST Optimization |      | Driver JIT / ICD |      | SM / WGP / Cores |
-+------------------+      +------------------+      +------------------+      +------------------+
-                                                |
-                                                v
-+------------------------------------------------------------------------------------------------+
-|                      [ Cross-Platform Translation & Compilation Matrix ]                       |
-+-----------+--------------------+----------------------+-------------------+--------------------+
-| Platform  | Native Backend     | Shader Compilation   | Driver Runtime    | GPU Silicon ISA    |
-+-----------+--------------------+----------------------+-------------------+--------------------+
-| Windows   | DirectX 12 (D3D12) | WGSL -> HLSL -> DXIL | DXC / WDDM Driver | NVIDIA SASS / RDNA |
-| Linux/And | Vulkan API         | WGSL -> SPIR-V Byte  | Vulkan ICD / Mesa | RDNA ISA / NV SASS |
-| macOS/iOS | Metal Framework    | WGSL -> MSL -> AIR   | Apple Metal LLVM  | Apple AGX GPU ISA  |
-+-----------+--------------------+----------------------+-------------------+--------------------+
-                                                |
-                                                v
-+------------------------------------------------------------------------------------------------+
-|                 [ Physical Hardware Execution Layer (GPU Silicon Architecture) ]               |
-+------------------------------------------------------------------------------------------------+
-| Front-End: Command Processor (CP) reads ring buffers -> Threadgroup Dispatch (Warps/Waves)     |
-| Execution: Streaming Multiprocessors (SMs) / Workgroup Processors (WGPs) / Apple GPU Cores     |
-| Memory & Scanout: Register Files -> L1/L2 Cache -> VRAM (GDDR6/HBM/UMA) -> Display Engine      |
-+------------------------------------------------------------------------------------------------+
-```
-
----
-
-## Repository Structure
+## Directory Structure
 
 ```
-webgpu-renderer/
-├── engine/
-│   ├── __init__.py          # Public API: Config, Window, Shader, Camera, Renderer
-│   ├── camera.py            # Camera: view + projection matrix generation (pyglm)
-│   ├── config.py            # Config: environment-driven settings loader (python-dotenv)
-│   ├── gltf_utils.py        # GLTFBufferCache: WebGPU buffer upload + accessor parser
-│   ├── material.py          # Material: PBR properties + WebGPU texture lifecycle
-│   ├── renderer.py          # Renderer: render loop + frame rate limiter
-│   ├── shader.py            # Shader: WGSL module compile + bind group layout
-│   └── window.py            # Window: GLFW context + WebGPU surface presentation
+webgpu-rust/
+├── Cargo.toml               # Package manifest with lib (cdylib) and bin targets
+├── .env                     # Runtime configuration (camera, window, light, FPS)
+├── .gitignore               # Ignores build artifacts and target/
 ├── gltf/
-│   ├── mclaren_p1.glb       # glTF 2.0 binary scene asset
-│   ├── toyota_supra.gltf    # glTF 2.0 scene descriptor (JSON)
-│   ├── toyota_supra_data.bin # Binary vertex/index buffer blob
-│   └── toyota_supra_img*.png # 15 PBR texture maps
-├── scripts/
-│   └── load_supra.sh        # Convenience launcher for the Toyota Supra demo
+│   └── mclaren_p1.glb       # Default 3D binary model
 ├── shaders/
 │   └── shader.wgsl          # WebGPU WGSL vertex and fragment shader
-├── .env                     # Runtime configuration (camera, window, light, FPS)
-├── .gitignore
-├── main.py                  # Application entry point + render loop orchestration
-└── requirements.txt         # Python dependency manifest
+└── src/
+    ├── lib.rs               # Library API exports
+    ├── main.rs              # Desktop entrypoint & winit event loop
+    ├── config.rs            # .env configuration loader
+    ├── camera.rs            # Camera view & perspective projection matrices
+    ├── transform.rs         # Transform composition & normal matrix computation
+    ├── material.rs          # PBR materials & GPU texture lifecycle
+    ├── gltf_loader.rs       # glTF 2.0 / GLB model loader & buffer caching
+    └── renderer.rs          # Render pipelines, passes, and uniform buffers
 ```
 
+---
 
+## Running the Application
 
+### 1. Run with Default Model
+```powershell
+cargo run --release
+```
 
+### 2. Run with Custom glTF/GLB Asset
+```powershell
+cargo run --release -- path/to/model.glb
+```
 
-## License
+---
 
-This project is licensed under the **MIT License**.
+## Compiling for Android (Future Target)
+
+Because the project specifies `crate-type = ["lib", "cdylib"]`, compiling for Android requires only adding the Android target:
+```powershell
+rustup target add aarch64-linux-android
+cargo build --target aarch64-linux-android --release
+```

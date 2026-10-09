@@ -1,0 +1,22 @@
+[package]
+name = "webgpu-renderer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "webgpu_engine"
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "webgpu-renderer"
+path = "src/main.rs"
+
+[dependencies]
+wgpu = { version = "23.0", features = ["wgsl"] }
+winit = { version = "0.29", features = ["rwh_06"] }
+glam = { version = "0.28", features = ["bytemuck"] }
+bytemuck = { version = "1.18", features = ["derive"] }
+gltf = { version = "1.4", features = ["import", "names"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+dotenvy = "0.15"
+pollster = "0.3"
