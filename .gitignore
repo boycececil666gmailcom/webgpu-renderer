@@ -26,3 +26,11 @@ Thumbs.db
 wireless_debug/logs/*.log
 !wireless_debug/logs/.gitkeep
 
+# Buildozer & artifacts
+.buildozer
+.buildozer/
+pack_apk.py
+screen*.png
+*.log
+
+

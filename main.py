@@ -3,11 +3,46 @@
 import os
 import sys
 import time
+import traceback
+
+# Android runtime environment configuration
+if "ANDROID_ARGUMENT" in os.environ or "ANDROID_BOOTLOGO" in os.environ:
+    if "WGPU_LIB_PATH" not in os.environ:
+        os.environ["WGPU_LIB_PATH"] = "libwgpu_native.so"
+
+class _DiskLogger:
+    def __init__(self):
+        self._f = open("run.log", "w", buffering=1, encoding="utf-8")
+        self._orig = sys.stdout
+
+    def write(self, s):
+        try:
+            self._orig.write(s)
+            self._orig.flush()
+        except Exception:
+            pass
+        try:
+            self._f.write(s)
+            self._f.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._orig.flush()
+            self._f.flush()
+        except Exception:
+            pass
+
+_logger = _DiskLogger()
+sys.stdout = _logger
+sys.stderr = _logger
+
+print("[Main-Init] TeeLogger initialized, starting application...", flush=True)
 
 from pygltflib import GLTF2
 
 from engine import Camera, Config, Renderer, Shader, Window
-
 # endregion
 
 
@@ -51,8 +86,8 @@ def main():
         far=config.cam_far,
     )
 
-    print(f"[Main-Run] Loaded Native glTF 2.0: {model_path}")
-    print(f"[Main-Run] Target Frame Rate: {config.target_fps} FPS")
+    print(f"[Main-Run] Loaded Native glTF 2.0: {model_path}", flush=True)
+    print(f"[Main-Run] Target Frame Rate: {config.target_fps} FPS", flush=True)
 
     # 4. Main Rendering Loop
     try:
@@ -72,5 +107,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        err = traceback.format_exc()
+        print(f"[Main-Fatal] Unhandled exception: {err}", flush=True)
+        try:
+            with open("crash_trace.log", "w", encoding="utf-8") as f:
+                f.write(err)
+        except Exception:
+            pass
+        sys.exit(1)
 # endregion

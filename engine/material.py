@@ -43,7 +43,7 @@ class Material(GLTFMaterial):
 
     @property
     def is_transparent(self) -> bool:
-        return self.alphaMode in ["BLEND", "MASK"] or self.base_color_vec4.a < 0.99
+        return self.alphaMode in ["BLEND", "MASK"] or self.base_color_vec4[3] < 0.99
 
     def load_texture(self, device: wgpu.GPUDevice, img_source) -> None:
         """Loads and uploads an image into a WebGPU texture."""
