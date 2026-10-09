@@ -127,7 +127,7 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                     include_str!("../shaders/shader.wgsl").to_string()
                 };
 
-                let mut renderer = Renderer::new(
+                let renderer = Renderer::new(
                     device,
                     queue,
                     surface_format,
