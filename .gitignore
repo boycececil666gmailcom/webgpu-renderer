@@ -3,6 +3,5 @@ target/
 *.pdb
 .env.local
 screen.png
-wireless_debug/logs/*.log
-!wireless_debug/logs/.gitkeep
-build_apk_tmp/
+android/.tmp/
+
