@@ -1,6 +1,6 @@
 #region BuildPipeline
 Write-Host "[Build-Android] Packaging Android APK..."
-python "$PSScriptRoot\pack_apk.py"
+powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\pack_apk.ps1"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[Build-Android] Build succeeded! To deploy wirelessly, run:"

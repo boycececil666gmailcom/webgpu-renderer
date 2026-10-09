@@ -7,7 +7,7 @@ param(
 $RootDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Adb = if (Test-Path "C:\Users\boyce\platform-tools\adb.exe") { "C:\Users\boyce\platform-tools\adb.exe" } else { "adb" }
 $Package = "org.antigravity.webgpurenderer"
-$Activity = "org.kivy.android.PythonActivity"
+$Activity = "android.app.NativeActivity"
 #endregion
 
 #region Connect
@@ -66,5 +66,5 @@ Write-Host "[Deploy-Launch] Starting $Package..."
 & $Adb -s $Serial shell am start -n "$Package/$Activity" | Out-Null
 
 Write-Host "[Deploy-Launch] Streaming logs (Ctrl+C to stop)..."
-& $Adb -s $Serial logcat -v time -s Rust:* wgpu:* python:* pythonutil:* SDL:* SDLActivity:* AndroidRuntime:* CRASH:* DEBUG:* *:F
+& $Adb -s $Serial logcat -v time -s Rust:* wgpu:* SDL:* SDLActivity:* AndroidRuntime:* CRASH:* DEBUG:* *:F
 #endregion

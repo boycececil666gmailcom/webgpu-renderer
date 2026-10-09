@@ -2,12 +2,6 @@ target/
 **/*.rs.bk
 *.pdb
 .env.local
-*.pyc
-__pycache__/
-.buildozer*
-.ruff_cache/
-.venv/
-venv/
 screen.png
 wireless_debug/logs/*.log
 !wireless_debug/logs/.gitkeep

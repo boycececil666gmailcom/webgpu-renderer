@@ -1,0 +1,5 @@
+#region CargoConfig
+[target.aarch64-linux-android]
+ar = "C:/Users/boyce/android-ndk-r26b/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+linker = "C:/Users/boyce/android-ndk-r26b/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android34-clang.cmd"
+#endregion
