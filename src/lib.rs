@@ -12,7 +12,6 @@ pub use gltf_loader::GltfScene;
 pub use material::Material;
 pub use renderer::Renderer;
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -119,37 +118,17 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                 };
                 surface.configure(&device, &surface_config);
 
-                let shader_path = Path::new("shaders/shader.wgsl");
-                let shader_source = if shader_path.exists() {
-                    std::fs::read_to_string(shader_path)
-                        .unwrap_or_else(|_| include_str!("../shaders/shader.wgsl").to_string())
-                } else {
-                    include_str!("../shaders/shader.wgsl").to_string()
-                };
-
                 let renderer = Renderer::new(
                     device,
                     queue,
                     surface_format,
                     width,
                     height,
-                    &shader_source,
+                    include_str!("../shaders/shader.wgsl"),
                 );
 
-                let candidates = [
-                    "/sdcard/Android/data/org.antigravity.webgpurenderer/files/mclaren_p1.glb",
-                    "/sdcard/mclaren_p1.glb",
-                    "gltf/mclaren_p1.glb",
-                    &model_path,
-                ];
-                let resolved_path = candidates
-                    .iter()
-                    .find(|p| Path::new(p).exists())
-                    .unwrap_or(&&model_path[..])
-                    .to_string();
-
                 let scene = match GltfScene::load(
-                    &resolved_path,
+                    &model_path,
                     &renderer.device,
                     &renderer.queue,
                     &renderer.bgl_obj,
@@ -159,7 +138,7 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                 ) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("[Engine-Fatal] Failed to load glTF model '{resolved_path}': {e:?}");
+                        eprintln!("[Engine-Fatal] Failed to load glTF model '{model_path}': {e:?}");
                         return;
                     }
                 };
@@ -173,7 +152,7 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                     config.cam_far,
                 );
 
-                println!("[Engine-Run] Successfully initialized graphics pipeline and loaded model: {resolved_path}");
+                println!("[Engine-Run] Successfully initialized graphics pipeline and loaded model: {model_path}");
                 render_state = Some(RenderState {
                     surface,
                     surface_config,

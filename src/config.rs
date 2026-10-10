@@ -1,6 +1,7 @@
 // #region Config
-use std::env;
 use glam::Vec3;
+use std::env;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -16,70 +17,41 @@ pub struct Config {
     pub light_dir: Vec3,
 }
 
+fn env_var<T: FromStr>(key: &str, default: T) -> T {
+    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 impl Config {
     pub fn load() -> Self {
         dotenvy::dotenv().ok();
 
-        let scr_width = env::var("SCR_WIDTH")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1920);
-        let scr_height = env::var("SCR_HEIGHT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1080);
-        let target_fps = env::var("TARGET_FPS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(165);
-
-        let cam_pos = Vec3::new(
-            env::var("CAM_POS_X").ok().and_then(|v| v.parse().ok()).unwrap_or(1.75),
-            env::var("CAM_POS_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(0.82),
-            env::var("CAM_POS_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(5.35),
-        );
-
-        let cam_target = Vec3::new(
-            env::var("CAM_TARGET_X").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0),
-            env::var("CAM_TARGET_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(0.48),
-            env::var("CAM_TARGET_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(1.20),
-        );
-
-        let cam_up = Vec3::new(0.0, 1.0, 0.0);
-
-        let cam_fov = env::var("CAM_FOV")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(28.0);
-        let cam_near = env::var("CAM_NEAR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.1);
-        let cam_far = env::var("CAM_FAR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(500.0);
-
-        let light_dir = Vec3::new(
-            env::var("LIGHT_DIR_X").ok().and_then(|v| v.parse().ok()).unwrap_or(0.3),
-            env::var("LIGHT_DIR_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0),
-            env::var("LIGHT_DIR_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
-        );
+        let cfg = Self {
+            scr_width: env_var("SCR_WIDTH", 1920),
+            scr_height: env_var("SCR_HEIGHT", 1080),
+            target_fps: env_var("TARGET_FPS", 165),
+            cam_pos: Vec3::new(
+                env_var("CAM_POS_X", 1.75),
+                env_var("CAM_POS_Y", 0.82),
+                env_var("CAM_POS_Z", 5.35),
+            ),
+            cam_target: Vec3::new(
+                env_var("CAM_TARGET_X", 0.0),
+                env_var("CAM_TARGET_Y", 0.48),
+                env_var("CAM_TARGET_Z", 1.20),
+            ),
+            cam_up: Vec3::new(0.0, 1.0, 0.0),
+            cam_fov: env_var("CAM_FOV", 28.0),
+            cam_near: env_var("CAM_NEAR", 0.1),
+            cam_far: env_var("CAM_FAR", 500.0),
+            light_dir: Vec3::new(
+                env_var("LIGHT_DIR_X", 0.3),
+                env_var("LIGHT_DIR_Y", 1.0),
+                env_var("LIGHT_DIR_Z", 0.5),
+            ),
+        };
 
         println!("[Config-Load] Configuration successfully initialized.");
-
-        Self {
-            scr_width,
-            scr_height,
-            target_fps,
-            cam_pos,
-            cam_target,
-            cam_up,
-            cam_fov,
-            cam_near,
-            cam_far,
-            light_dir,
-        }
+        cfg
     }
 }
 // #endregion
