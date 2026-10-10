@@ -1,8 +1,7 @@
 // #region Renderer
 use std::borrow::Cow;
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
-use crate::camera::Camera;
 use crate::gltf_loader::GltfScene;
 
 #[repr(C)]
@@ -349,15 +348,15 @@ impl Renderer {
     pub fn render_frame(
         &mut self,
         output_view: &wgpu::TextureView,
-        camera: &Camera,
-        aspect_ratio: f32,
+        view: Mat4,
+        projection: Mat4,
         light_dir: Vec3,
         scene: &GltfScene,
     ) {
         // 1. Update Frame Uniforms
         let frame_uniforms = FrameUniforms {
-            view: camera.get_view_matrix().to_cols_array_2d(),
-            projection: camera.get_projection_matrix(aspect_ratio).to_cols_array_2d(),
+            view: view.to_cols_array_2d(),
+            projection: projection.to_cols_array_2d(),
             light_dir: light_dir.to_array(),
             _padding: 0.0,
         };

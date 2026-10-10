@@ -1,12 +1,8 @@
-// #region PublicApi
-pub mod camera;
 pub mod config;
 pub mod gltf_loader;
 pub mod material;
 pub mod renderer;
-pub mod transform;
 
-pub use camera::Camera;
 pub use config::Config;
 pub use gltf_loader::GltfScene;
 pub use material::Material;
@@ -28,7 +24,6 @@ struct RenderState {
     surface_config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     scene: GltfScene,
-    camera: Camera,
 }
 
 pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -143,22 +138,12 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                     }
                 };
 
-                let camera = Camera::new(
-                    config.cam_pos,
-                    config.cam_target,
-                    config.cam_up,
-                    config.cam_fov,
-                    config.cam_near,
-                    config.cam_far,
-                );
-
                 println!("[Engine-Run] Successfully initialized graphics pipeline and loaded model: {model_path}");
                 render_state = Some(RenderState {
                     surface,
                     surface_config,
                     renderer,
                     scene,
-                    camera,
                 });
             }
         }
@@ -195,11 +180,13 @@ pub fn run_engine(event_loop: EventLoop<()>, model_path: &str) -> Result<(), Box
                         Ok(output) => {
                             let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
                             let aspect = state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
+                            let view_mat = glam::Mat4::look_at_rh(config.cam_pos, config.cam_target, config.cam_up);
+                            let proj_mat = glam::Mat4::perspective_rh(config.cam_fov.to_radians(), aspect, config.cam_near, config.cam_far);
 
                             state.renderer.render_frame(
                                 &view,
-                                &state.camera,
-                                aspect,
+                                view_mat,
+                                proj_mat,
                                 config.light_dir,
                                 &state.scene,
                             );

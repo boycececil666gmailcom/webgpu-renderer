@@ -1,10 +1,9 @@
 // #region GltfLoader
 use std::path::Path;
-use glam::Mat4;
+use glam::{Mat3, Mat4};
 use wgpu::util::DeviceExt;
 
 use crate::material::Material;
-use crate::transform::compute_normal_matrix;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -150,9 +149,10 @@ impl GltfScene {
             let world_transform = parent_transform * Mat4::from_cols_array_2d(&node.transform().matrix());
 
             if let Some(mesh) = node.mesh() {
+                let normal_matrix = Mat4::from_mat3(Mat3::from_mat4(world_transform).inverse().transpose());
                 let uniforms = ObjectUniforms {
                     model: world_transform.to_cols_array_2d(),
-                    normal_matrix: compute_normal_matrix(world_transform).to_cols_array_2d(),
+                    normal_matrix: normal_matrix.to_cols_array_2d(),
                 };
                 let uniform_buffer = Self::create_buffer(device, "ObjectUniform", bytemuck::bytes_of(&uniforms), wgpu::BufferUsages::UNIFORM);
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
