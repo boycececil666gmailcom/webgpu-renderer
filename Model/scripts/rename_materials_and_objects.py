@@ -1,7 +1,9 @@
-#region RenameMaterialsAndObjectsModule
+#region Imports
 import bpy
 import os
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[RenameParts-{fn}] {msg}")
 
@@ -156,8 +158,13 @@ def rename_materials_and_objects():
     log("rename_materials_and_objects", f"Rendering verification image to {render_path}...")
     bpy.ops.render.render(write_still=True)
     log("rename_materials_and_objects", "Verification render finished successfully!")
+#endregion
+
+#region Core
+def main() -> None:
+    rename_materials_and_objects()
 
 if __name__ == "__main__":
-    rename_materials_and_objects()
+    main()
 #endregion
 

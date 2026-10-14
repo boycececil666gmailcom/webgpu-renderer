@@ -1,9 +1,11 @@
-#region FixRoadAndBloatModule
+#region Imports
 import bpy
 import bmesh
 import math
 import os
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[Optimizer-{fn}] {msg}")
 
@@ -124,8 +126,10 @@ def purge_scene_bloat():
         bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
 
     log("purge_scene_bloat", f"Purge complete. Remaining meshes: {len(bpy.data.meshes)}, materials: {len(bpy.data.materials)}, images: {len(bpy.data.images)}, node groups: {len(bpy.data.node_groups)}")
+#endregion
 
-def execute():
+#region Core
+def execute() -> None:
     blend_path = r"c:\Users\boyce\OneDrive\Desktop\webgpu-renderer\Model\asset.blend"
     log("execute", f"Opening {blend_path}")
     bpy.ops.wm.open_mainfile(filepath=blend_path)

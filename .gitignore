@@ -4,6 +4,8 @@ target/
 .env.local
 screen.png
 android/.tmp/
+android/logs/
+.env
 
 # Blender backup & cache files
 *.blend@

@@ -1,9 +1,11 @@
-#region GroupCarByMaterialModule
+#region Imports
 import bpy
 from collections import defaultdict
 import os
 import mathutils
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[MaterialGroup-{fn}] {msg}")
 
@@ -159,7 +161,12 @@ def group_car_by_material():
     log("group_car_by_material", f"Rendering verification image to {render_path}...")
     bpy.ops.render.render(write_still=True)
     log("group_car_by_material", "Verification render finished successfully!")
+#endregion
+
+#region Core
+def main() -> None:
+    group_car_by_material()
 
 if __name__ == "__main__":
-    group_car_by_material()
+    main()
 #endregion

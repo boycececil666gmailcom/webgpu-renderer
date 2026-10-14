@@ -1,7 +1,9 @@
-#region FixPowertrainAndWheelsModule
+#region Imports
 import bpy
 import os
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[CarReorg-{fn}] {msg}")
 
@@ -121,8 +123,13 @@ def fix_powertrain_and_wheel_organization():
     # 8. Save compressed
     bpy.ops.wm.save_mainfile(filepath=blend_path, compress=True)
     log("fix_powertrain_and_wheel_organization", f"Successfully saved updated {blend_path}")
+#endregion
+
+#region Core
+def main() -> None:
+    fix_powertrain_and_wheel_organization()
 
 if __name__ == "__main__":
-    fix_powertrain_and_wheel_organization()
+    main()
 #endregion
 

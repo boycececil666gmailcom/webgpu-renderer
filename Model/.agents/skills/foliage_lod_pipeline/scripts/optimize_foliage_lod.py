@@ -6,7 +6,7 @@ import random
 import numpy as np
 #endregion
 
-#region FoliageLODPipeline
+#region Scaffolding
 def generate_foliage_lod(
     src_obj: bpy.types.Object,
     leaf_mat_idx: int,
@@ -204,7 +204,7 @@ def generate_foliage_lod(
     return out_mesh
 #endregion
 
-#region MaterialBake
+#region Baking
 def bake_leaf_material_gltf(
     mat_name: str,
     diff_name: str,
@@ -307,7 +307,7 @@ def bake_leaf_material_gltf(
     return baked_mat
 #endregion
 
-#region AtlasBake
+#region Atlas
 def combine_bush02_materials_to_atlas(obj: bpy.types.Object) -> bpy.types.Material:
     """
     Consolidates 3 materials (Leaf, Branch 02, Branch 03) into a single 2K PBR material atlas.
@@ -387,7 +387,7 @@ def combine_bush02_materials_to_atlas(obj: bpy.types.Object) -> bpy.types.Materi
     return mat
 #endregion
 
-#region CrossingBillboard
+#region Billboard
 def create_crossing_billboard_lod3(
     obj_name: str,
     width: float,

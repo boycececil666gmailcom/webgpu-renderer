@@ -1,0 +1,17 @@
+{
+  "rust-analyzer.server.path": "C:\\Users\\boyce\\.cargo\\bin\\rust-analyzer.exe",
+  "rust-analyzer.linkedProjects": [
+    "../Cargo.toml"
+  ],
+  "rust-analyzer.cargo.target": "aarch64-linux-android",
+  "rust-analyzer.check.command": "check",
+  "rust-analyzer.check.extraArgs": [
+    "--target",
+    "aarch64-linux-android"
+  ],
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.procMacro.enable": true,
+  "files.associations": {
+    "*.rs": "rust"
+  }
+}

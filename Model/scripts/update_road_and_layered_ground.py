@@ -1,11 +1,13 @@
-#region GroundAndRoadPipelineModule
+#region Imports
 import bpy
 import bmesh
 import math
 import os
 import time
 from pathlib import Path
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[GroundPipeline-{fn}] {msg}")
 
@@ -519,8 +521,13 @@ def execute_pipeline():
     log("execute_pipeline", f"Rendering verification image to {render_path}...")
     bpy.ops.render.render(write_still=True)
     log("execute_pipeline", "Verification render completed!")
+#endregion
+
+#region Core
+def main() -> None:
+    execute_pipeline()
 
 if __name__ == "__main__":
-    execute_pipeline()
+    main()
 #endregion
 

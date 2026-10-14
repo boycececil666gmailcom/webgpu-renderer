@@ -1,9 +1,11 @@
-// #region Renderer
+// #region Imports
 use std::borrow::Cow;
 use glam::{Mat4, Vec3};
 
 use crate::gltf_loader::GltfScene;
+// #endregion
 
+// #region Types
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FrameUniforms {
@@ -30,17 +32,14 @@ pub struct Renderer {
     pub depth_size: (u32, u32),
     pub clear_color: wgpu::Color,
 }
+// #endregion
 
+// #region Scaffolding
 impl Renderer {
-    pub fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        surface_format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-        shader_source: &str,
-    ) -> Self {
-        // 1. Shared default 1x1 white texture and sampler
+    fn create_default_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::TextureView, wgpu::Sampler) {
         let default_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Default 1x1 White Texture"),
             size: wgpu::Extent3d {
@@ -88,7 +87,12 @@ impl Renderer {
             ..Default::default()
         });
 
-        // 2. Bind Group Layouts
+        (default_view, default_sampler)
+    }
+
+    fn create_bind_group_layouts(
+        device: &wgpu::Device,
+    ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
         let bgl_frame = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Frame BindGroupLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -149,7 +153,13 @@ impl Renderer {
             ],
         });
 
-        // 3. Frame Uniform Buffer & BindGroup
+        (bgl_frame, bgl_obj, bgl_mat)
+    }
+
+    fn create_frame_uniforms(
+        device: &wgpu::Device,
+        bgl_frame: &wgpu::BindGroupLayout,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Frame Uniform Buffer"),
             size: std::mem::size_of::<FrameUniforms>() as u64,
@@ -159,14 +169,24 @@ impl Renderer {
 
         let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Frame BindGroup"),
-            layout: &bgl_frame,
+            layout: bgl_frame,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: frame_buffer.as_entire_binding(),
             }],
         });
 
-        // 4. Pipelines
+        (frame_buffer, frame_bind_group)
+    }
+
+    fn create_pipelines(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        bgl_frame: &wgpu::BindGroupLayout,
+        bgl_obj: &wgpu::BindGroupLayout,
+        bgl_mat: &wgpu::BindGroupLayout,
+        shader_source: &str,
+    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("WGSL Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
@@ -174,7 +194,7 @@ impl Renderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&bgl_frame, &bgl_obj, &bgl_mat],
+            bind_group_layouts: &[bgl_frame, bgl_obj, bgl_mat],
             push_constant_ranges: &[],
         });
 
@@ -282,33 +302,7 @@ impl Renderer {
             cache: None,
         });
 
-        // 5. Depth texture
-        let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
-
-        println!("[Renderer-Init] Pipeline initialized successfully.");
-
-        Self {
-            device,
-            queue,
-            bgl_frame,
-            bgl_obj,
-            bgl_mat,
-            default_view,
-            default_sampler,
-            frame_buffer,
-            frame_bind_group,
-            pipeline_opaque,
-            pipeline_transparent,
-            depth_texture,
-            depth_view,
-            depth_size: (width, height),
-            clear_color: wgpu::Color {
-                r: 0.094,
-                g: 0.094,
-                b: 0.106,
-                a: 1.0,
-            },
-        }
+        (pipeline_opaque, pipeline_transparent)
     }
 
     fn create_depth_texture(
@@ -345,15 +339,7 @@ impl Renderer {
         }
     }
 
-    pub fn render_frame(
-        &mut self,
-        output_view: &wgpu::TextureView,
-        view: Mat4,
-        projection: Mat4,
-        light_dir: Vec3,
-        scene: &GltfScene,
-    ) {
-        // 1. Update Frame Uniforms
+    fn update_frame_uniforms(&self, view: Mat4, projection: Mat4, light_dir: Vec3) {
         let frame_uniforms = FrameUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
@@ -365,73 +351,141 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&frame_uniforms),
         );
+    }
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Frame Command Encoder"),
+    fn record_render_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        scene: &GltfScene,
+    ) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Main Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
         });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Main Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+        render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
-            render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        for is_transparent in [false, true] {
+            let pipeline = if is_transparent {
+                &self.pipeline_transparent
+            } else {
+                &self.pipeline_opaque
+            };
+            render_pass.set_pipeline(pipeline);
 
-            // Two-pass rendering: Pass 1 Opaque, Pass 2 Transparent
-            for is_transparent in [false, true] {
-                let pipeline = if is_transparent {
-                    &self.pipeline_transparent
-                } else {
-                    &self.pipeline_opaque
-                };
-                render_pass.set_pipeline(pipeline);
+            for node in &scene.render_nodes {
+                if let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) {
+                    render_pass.set_bind_group(1, &node.bind_group, &[]);
 
-                for node in &scene.render_nodes {
-                    if let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) {
-                        render_pass.set_bind_group(1, &node.bind_group, &[]);
+                    for prim in primitives {
+                        let mat = &scene.materials[prim.material_index];
+                        if mat.is_transparent != is_transparent {
+                            continue;
+                        }
 
-                        for prim in primitives {
-                            let mat = &scene.materials[prim.material_index];
-                            if mat.is_transparent != is_transparent {
-                                continue;
-                            }
+                        render_pass.set_bind_group(2, &mat.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
+                        render_pass.set_vertex_buffer(1, prim.norm_buffer.slice(..));
+                        render_pass.set_vertex_buffer(2, prim.uv_buffer.slice(..));
 
-                            render_pass.set_bind_group(2, &mat.bind_group, &[]);
-                            render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
-                            render_pass.set_vertex_buffer(1, prim.norm_buffer.slice(..));
-                            render_pass.set_vertex_buffer(2, prim.uv_buffer.slice(..));
-
-                            if let Some(index_buf) = &prim.index_buffer {
-                                render_pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                                render_pass.draw_indexed(0..prim.count, 0, 0..1);
-                            } else {
-                                render_pass.draw(0..prim.count, 0..1);
-                            }
+                        if let Some(index_buf) = &prim.index_buffer {
+                            render_pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                            render_pass.draw_indexed(0..prim.count, 0, 0..1);
+                        } else {
+                            render_pass.draw(0..prim.count, 0..1);
                         }
                     }
                 }
             }
         }
+    }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+    fn assemble(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        bgl_frame: wgpu::BindGroupLayout,
+        bgl_obj: wgpu::BindGroupLayout,
+        bgl_mat: wgpu::BindGroupLayout,
+        default_view: wgpu::TextureView,
+        default_sampler: wgpu::Sampler,
+        frame_buffer: wgpu::Buffer,
+        frame_bind_group: wgpu::BindGroup,
+        pipeline_opaque: wgpu::RenderPipeline,
+        pipeline_transparent: wgpu::RenderPipeline,
+        depth_texture: wgpu::Texture,
+        depth_view: wgpu::TextureView,
+        depth_size: (u32, u32),
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            bgl_frame,
+            bgl_obj,
+            bgl_mat,
+            default_view,
+            default_sampler,
+            frame_buffer,
+            frame_bind_group,
+            pipeline_opaque,
+            pipeline_transparent,
+            depth_texture,
+            depth_view,
+            depth_size,
+            clear_color: wgpu::Color {
+                r: 0.094,
+                g: 0.094,
+                b: 0.106,
+                a: 1.0,
+            },
+        }
+    }
+}
+// #endregion
+
+// #region Core
+impl Renderer {
+    pub fn new(
+        device: wgpu::Device, queue: wgpu::Queue, surface_format: wgpu::TextureFormat,
+        width: u32, height: u32, shader_source: &str,
+    ) -> Self {
+        let (default_view, default_sampler) = Self::create_default_texture(&device, &queue);
+        let (bgl_frame, bgl_obj, bgl_mat) = Self::create_bind_group_layouts(&device);
+        let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame);
+        let (pipeline_opaque, pipeline_transparent) =
+            Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_obj, &bgl_mat, shader_source);
+        let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
+
+        println!("[Renderer-Init] Pipeline initialized successfully.");
+        Self::assemble(
+            device, queue, bgl_frame, bgl_obj, bgl_mat, default_view, default_sampler,
+            frame_buffer, frame_bind_group, pipeline_opaque, pipeline_transparent,
+            depth_texture, depth_view, (width, height),
+        )
+    }
+
+    pub fn render_frame(&mut self, output: &wgpu::TextureView, view: Mat4, proj: Mat4, light: Vec3, scene: &GltfScene) {
+        self.update_frame_uniforms(view, proj, light);
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Frame Command Encoder") });
+        self.record_render_pass(&mut enc, output, scene);
+        self.queue.submit(std::iter::once(enc.finish()));
     }
 }
 // #endregion

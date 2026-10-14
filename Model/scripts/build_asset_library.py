@@ -1,9 +1,11 @@
-#region BuildAssetLibraryModule
+#region Imports
 import bpy
 import bmesh
 import os
 from pathlib import Path
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[AssetLibrary-{fn}] {msg}")
 
@@ -186,8 +188,10 @@ def assemble_unified_asset_library(bushes_blend_path: str, temp_ground_path: str
     if os.path.exists(temp_ground_path):
         os.remove(temp_ground_path)
         log("assemble_unified_asset_library", "Cleaned up temporary export file.")
+#endregion
 
-def main():
+#region Core
+def main() -> None:
     base_dir = Path("c:/Users/boyce/OneDrive/Desktop/webgpu-renderer/Model")
     lambo_blend = str(base_dir / "Lamborghini in the forest.blend")
     bushes_blend = str(base_dir / "Bushes_LOD.blend")

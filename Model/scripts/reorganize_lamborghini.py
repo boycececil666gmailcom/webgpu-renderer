@@ -1,8 +1,10 @@
-#region ReorganizeLamborghiniModule
+#region Imports
 import bpy
 from mathutils import Vector
 from pathlib import Path
+#endregion
 
+#region Scaffolding
 def log(fn: str, msg: str) -> None:
     print(f"[LamboReorg-{fn}] {msg}")
 
@@ -263,8 +265,10 @@ def append_reorganized_lambo_to_asset_library(lambo_blend: str, asset_blend: str
 
     bpy.ops.wm.save_as_mainfile(filepath=asset_blend)
     log("append_to_asset", f"Saved updated asset library: {asset_blend}")
+#endregion
 
-def main():
+#region Core
+def main() -> None:
     base_dir = Path("c:/Users/boyce/OneDrive/Desktop/webgpu-renderer/Model")
     lambo_blend = str(base_dir / "Lamborghini in the forest.blend")
     asset_blend = str(base_dir / "asset.blend")
