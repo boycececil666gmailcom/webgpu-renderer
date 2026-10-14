@@ -5,3 +5,17 @@ target/
 screen.png
 android/.tmp/
 
+# Blender backup & cache files
+*.blend@
+*.blend1
+*.blend2
+*.blend3
+*.blend.bak
+__pycache__/
+*.pyc
+
+# Heavy binary 3D assets (>100MB) and baked textures
+Model/*.blend
+!Model/mclaren-p1-mso.blend
+Model/textures/
+Model/*.png0001.png
