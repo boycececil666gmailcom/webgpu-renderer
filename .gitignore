@@ -18,6 +18,12 @@ __pycache__/
 
 # Heavy binary 3D assets (>100MB) and baked textures
 Model/*.blend
-!Model/mclaren-p1-mso.blend
 Model/textures/
 Model/*.png0001.png
+gltf/base_scene.glb
+
+# Transient test artifacts and agent cache
+.kilo/
+*.idsig
+live_sync.png
+

@@ -3,12 +3,15 @@ pub mod config;
 pub mod gltf_loader;
 pub mod material;
 pub mod renderer;
+pub mod telemetry;
 
 pub use config::Config;
 pub use gltf_loader::GltfScene;
 pub use material::Material;
 pub use renderer::Renderer;
+pub use telemetry::{log_error, log_info, log_warn, TelemetryTracker};
 
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -25,7 +28,9 @@ struct RenderState {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
-    scene: GltfScene,
+    scene: Option<GltfScene>,
+    scene_rx: Option<Receiver<Result<GltfScene, String>>>,
+    telemetry: TelemetryTracker,
 }
 // #endregion
 
@@ -48,16 +53,88 @@ fn compute_frame_budget(target_fps: u32) -> Duration {
     }
 }
 
+fn spawn_scene_load(
+    renderer: &Renderer,
+    model: String,
+    max_texture_size: u32,
+) -> Option<Receiver<Result<GltfScene, String>>> {
+    let device = Arc::clone(&renderer.device);
+    let queue = Arc::clone(&renderer.queue);
+    let bgl_obj = Arc::clone(&renderer.bgl_obj);
+    let bgl_mat = Arc::clone(&renderer.bgl_mat);
+    let default_view = Arc::clone(&renderer.default_view);
+    let default_sampler = Arc::clone(&renderer.default_sampler);
+    let (tx, rx) = mpsc::channel();
+
+    let spawned = std::thread::Builder::new()
+        .name("scene-loader".to_string())
+        .spawn(move || {
+            let result = GltfScene::load(
+                &model,
+                &device,
+                &queue,
+                &bgl_obj,
+                &bgl_mat,
+                &default_view,
+                &default_sampler,
+                max_texture_size,
+            )
+            .map_err(|error| format!("{error:?}"));
+            let _ = tx.send(result);
+        });
+
+    match spawned {
+        Ok(_) => Some(rx),
+        Err(error) => {
+            log_error("Engine", "Load", &format!("Failed to spawn scene loader thread: {error:?}"));
+            None
+        }
+    }
+}
+
+fn take_loaded_scene(state: &mut RenderState) {
+    let Some(receiver) = state.scene_rx.as_ref() else {
+        return;
+    };
+
+    match receiver.try_recv() {
+        Ok(Ok(scene)) => {
+            let primitive_count: usize = scene.primitives_by_mesh.iter().map(|primitives| primitives.len()).sum();
+            state.telemetry.set_scene_stats(
+                scene.primitives_by_mesh.len(),
+                scene.render_nodes.len(),
+                primitive_count,
+                scene.materials.len(),
+            );
+            log_info("Engine", "Load", &format!(
+                "Scene ready: {} meshes | {} instances | {} materials",
+                scene.primitives_by_mesh.len(), scene.render_nodes.len(), scene.materials.len()
+            ));
+            state.scene = Some(scene);
+            state.scene_rx = None;
+        }
+        Ok(Err(error)) => {
+            log_error("Engine", "Load", &format!("Failed to load glTF model: {error}"));
+            state.scene_rx = None;
+        }
+        Err(TryRecvError::Disconnected) => {
+            log_error("Engine", "Load", "Scene loader thread terminated without producing a result.");
+            state.scene_rx = None;
+        }
+        Err(TryRecvError::Empty) => {}
+    }
+}
+
 fn init_render_state(
     window: Arc<Window>,
     instance: &wgpu::Instance,
     config: &Config,
 ) -> Option<RenderState> {
-    println!("[Engine-Lifecycle] Android surface created. Initializing Vulkan/WebGPU...");
+    log_info("Engine", "Lifecycle", "Android surface acquired. Initializing Vulkan/WebGPU device...");
     let surface = match instance.create_surface(window.clone()) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[Engine-Fatal] Failed to create WebGPU surface: {e:?}");
+            log_error("Engine", "Fatal", &format!("Failed to create WebGPU surface: {e:?}"));
             return None;
         }
     };
@@ -69,7 +146,7 @@ fn init_render_state(
     })) {
         Some(a) => a,
         None => {
-            eprintln!("[Engine-Fatal] Failed to find suitable GPU adapter");
+            log_error("Engine", "Fatal", "Failed to find suitable GPU adapter");
             return None;
         }
     };
@@ -85,7 +162,7 @@ fn init_render_state(
     )) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("[Engine-Fatal] Failed to request device: {e:?}");
+            log_error("Engine", "Fatal", &format!("Failed to request device: {e:?}"));
             return None;
         }
     };
@@ -120,37 +197,32 @@ fn init_render_state(
         surface_format,
         width,
         height,
-        include_str!("../shaders/shader.wgsl"),
+        include_str!("../shaders/standard_pbr.wgsl"),
     );
 
-    let scene = match GltfScene::load(
-        &config.default_model,
-        &renderer.device,
-        &renderer.queue,
-        &renderer.bgl_obj,
-        &renderer.bgl_mat,
-        &renderer.default_view,
-        &renderer.default_sampler,
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[Engine-Fatal] Failed to load glTF model '{}': {e:?}", config.default_model);
-            return None;
-        }
-    };
+    let scene_rx = spawn_scene_load(&renderer, config.default_model.clone(), config.max_texture_size)?;
 
-    println!("[Engine-Run] Graphics pipeline ready on Android. Model: {}", config.default_model);
+    let mut telemetry = TelemetryTracker::new();
+    telemetry.set_resolution(width, height);
+
+    log_info("Engine", "Lifecycle", &format!(
+        "Pipeline ready: {}x{} ({:?}). Streaming '{}' on background thread (max texture {}px).",
+        width, height, surface_format, config.default_model, config.max_texture_size
+    ));
+
     Some(RenderState {
         surface,
         surface_config,
         renderer,
-        scene,
+        scene: None,
+        scene_rx: Some(scene_rx),
+        telemetry,
     })
 }
 
 fn handle_window_event(
     event: &WindowEvent,
-    config: &Config,
+    _config: &Config,
     target: &EventLoopWindowTarget<()>,
     target_frame_time: Duration,
     state_opt: &mut Option<RenderState>,
@@ -163,6 +235,8 @@ fn handle_window_event(
                     state.surface_config.height = physical_size.height;
                     state.surface.configure(&state.renderer.device, &state.surface_config);
                     state.renderer.resize(physical_size.width, physical_size.height);
+                    state.telemetry.set_resolution(physical_size.width, physical_size.height);
+                    log_info("Engine", "Lifecycle", &format!("Surface resized: {}x{}", physical_size.width, physical_size.height));
                 }
             }
         }
@@ -170,31 +244,39 @@ fn handle_window_event(
             let frame_start = Instant::now();
 
             if let Some(state) = state_opt.as_mut() {
-                match state.surface.get_current_texture() {
+                take_loaded_scene(state);
+                let RenderState { surface, surface_config, renderer, scene, telemetry, .. } = state;
+
+                match surface.get_current_texture() {
                     Ok(output) => {
                         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                        let aspect = state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
-                        let view_mat = glam::Mat4::look_at_rh(config.cam_pos, config.cam_target, config.cam_up);
-                        let proj_mat = glam::Mat4::perspective_rh(config.cam_fov.to_radians(), aspect, config.cam_near, config.cam_far);
+                        let aspect = surface_config.width as f32 / surface_config.height.max(1) as f32;
 
-                        state.renderer.render_frame(
-                            &view,
-                            view_mat,
-                            proj_mat,
-                            config.light_dir,
-                            &state.scene,
-                        );
+                        if let Some(scene) = scene.as_ref() {
+                            renderer.render_frame(
+                                &view,
+                                scene.camera.view_matrix(),
+                                scene.camera.projection_matrix(aspect),
+                                &scene.light,
+                                scene.camera.position(),
+                                scene,
+                            );
+                        } else {
+                            renderer.render_clear(&view);
+                        }
+
                         output.present();
+                        telemetry.record_frame(frame_start.elapsed());
                     }
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        state.surface.configure(&state.renderer.device, &state.surface_config);
+                        surface.configure(&renderer.device, surface_config);
                     }
                     Err(wgpu::SurfaceError::OutOfMemory) => {
-                        eprintln!("[Engine-Fatal] GPU out of memory.");
+                        log_error("Engine", "Fatal", "GPU out of memory.");
                         target.exit();
                     }
                     Err(e) => {
-                        eprintln!("[Engine-Warn] Surface error: {e:?}");
+                        log_warn("Engine", "Surface", &format!("Surface error: {e:?}"));
                     }
                 }
             }
@@ -222,11 +304,12 @@ fn handle_engine_event(
     match event {
         Event::Resumed => {
             if render_state.is_none() {
+                log_info("Engine", "Lifecycle", "Resumed event received. Acquiring surface...");
                 *render_state = init_render_state(window.clone(), instance, config);
             }
         }
         Event::Suspended => {
-            println!("[Engine-Lifecycle] Suspended event received. Dropping surface...");
+            log_info("Engine", "Lifecycle", "Suspended event received. Dropping surface to conserve resources.");
             *render_state = None;
         }
         Event::WindowEvent { ref event, window_id } if window_id == window.id() => {
@@ -246,10 +329,10 @@ pub fn android_main(app: AndroidApp) {
     let config = Config::load();
     let event_loop = match create_android_event_loop(app) {
         Ok(el) => el,
-        Err(e) => return eprintln!("[Android-Fatal] Failed to create event loop: {e:?}"),
+        Err(e) => return log_error("Android", "Fatal", &format!("Failed to create event loop: {e:?}")),
     };
     if let Err(e) = run_engine(event_loop, config) {
-        eprintln!("[Android-Fatal] Engine execution failed: {e:?}");
+        log_error("Android", "Fatal", &format!("Engine execution failed: {e:?}"));
     }
 }
 

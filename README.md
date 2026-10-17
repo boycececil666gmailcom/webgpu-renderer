@@ -29,7 +29,9 @@ webgpu-renderer/
 │   ├── setup_emulator.ps1   # Provisions hardware-accelerated AVD
 │   └── run_emulator.ps1     # Boots Android emulator with Vulkan passthrough
 ├── gltf/
-│   └── mclaren_p1.glb       # Default 3D binary model
+│   ├── base_scene.glb          # Default 3D scene (Lamborghini, closed road, layered terrain)
+│   ├── foliage_prototypes.glb  # Foliage prototype assets for GPU instancing
+│   └── foliage_manifest.json   # Foliage LOD metadata & scatter parameters
 ├── shaders/
 │   └── shader.wgsl          # WebGPU WGSL vertex and fragment shader
 └── src/

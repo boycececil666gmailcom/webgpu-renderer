@@ -9,7 +9,11 @@ pub struct MaterialUniforms {
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    pub clearcoat: f32,
+    pub alpha_cutoff: f32,
     pub use_texture: u32,
+    pub is_unlit: u32,
+    pub alpha_mode: u32,
     pub _padding: u32,
 }
 
@@ -17,87 +21,17 @@ pub struct Material {
     pub uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub is_transparent: bool,
+    pub double_sided: bool,
     pub has_texture: bool,
 }
 // #endregion
 
 // #region Scaffolding
 impl Material {
-    fn create_texture_and_sampler(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        texture_data: Option<(&[u8], u32, u32)>,
-    ) -> (Option<wgpu::TextureView>, Option<wgpu::Sampler>, bool) {
-        if let Some((bytes, width, height)) = texture_data {
-            let size = wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            };
-
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Material Texture"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytes,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * width),
-                    rows_per_image: Some(height),
-                },
-                size,
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Material Sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                address_mode_w: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
-
-            (Some(view), Some(sampler), true)
-        } else {
-            (None, None, false)
-        }
-    }
-
-    fn create_uniform_buffer(
-        device: &wgpu::Device,
-        base_color: [f32; 4],
-        metallic: f32,
-        roughness: f32,
-        has_texture: bool,
-    ) -> wgpu::Buffer {
-        let uniforms = MaterialUniforms {
-            base_color,
-            metallic,
-            roughness,
-            use_texture: if has_texture { 1 } else { 0 },
-            _padding: 0,
-        };
-
+    fn create_uniform_buffer(device: &wgpu::Device, uniforms: &MaterialUniforms) -> wgpu::Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Uniform Buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
+            contents: bytemuck::bytes_of(uniforms),
             usage: wgpu::BufferUsages::UNIFORM,
         })
     }
@@ -133,22 +67,40 @@ impl Material {
 
 // #region Core
 impl Material {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout,
-        default_view: &wgpu::TextureView, default_sampler: &wgpu::Sampler,
-        base_color: [f32; 4], metallic: f32, roughness: f32,
-        is_transparent: bool, texture_data: Option<(&[u8], u32, u32)>,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        default_view: &wgpu::TextureView,
+        default_sampler: &wgpu::Sampler,
+        texture_view: Option<&wgpu::TextureView>,
+        base_color: [f32; 4],
+        metallic: f32,
+        roughness: f32,
+        clearcoat: f32,
+        alpha_cutoff: f32,
+        alpha_mode: u32,
+        is_unlit: bool,
+        is_transparent: bool,
+        double_sided: bool,
     ) -> Self {
-        let (view_opt, sampler_opt, has_texture) =
-            Self::create_texture_and_sampler(device, queue, texture_data);
-        let view = view_opt.as_ref().unwrap_or(default_view);
-        let sampler = sampler_opt.as_ref().unwrap_or(default_sampler);
-        let uniform_buffer =
-            Self::create_uniform_buffer(device, base_color, metallic, roughness, has_texture);
-        let bind_group =
-            Self::create_bind_group(device, layout, &uniform_buffer, view, sampler);
+        let has_texture = texture_view.is_some();
+        let view = texture_view.unwrap_or(default_view);
+        let uniforms = MaterialUniforms {
+            base_color,
+            metallic,
+            roughness,
+            clearcoat,
+            alpha_cutoff,
+            use_texture: if has_texture { 1 } else { 0 },
+            is_unlit: if is_unlit { 1 } else { 0 },
+            alpha_mode,
+            _padding: 0,
+        };
+        let uniform_buffer = Self::create_uniform_buffer(device, &uniforms);
+        let bind_group = Self::create_bind_group(device, layout, &uniform_buffer, view, default_sampler);
 
-        Self { uniform_buffer, bind_group, is_transparent, has_texture }
+        Self { uniform_buffer, bind_group, is_transparent, double_sided, has_texture }
     }
 }
 // #endregion

@@ -1,36 +1,45 @@
 // #region Imports
 use std::borrow::Cow;
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 
-use crate::gltf_loader::GltfScene;
+use crate::gltf_loader::{GltfScene, GpuPrimitive, RenderNode, SceneLight};
+use crate::material::Material;
 // #endregion
 
 // #region Types
+const LIGHT_INTENSITY_NORMALIZATION: f32 = 1000.0;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FrameUniforms {
     pub view: [[f32; 4]; 4],
     pub projection: [[f32; 4]; 4],
-    pub light_dir: [f32; 3],
-    pub _padding: f32,
+    pub cam_pos: [f32; 4],
+    pub light_dir: [f32; 4],
+    pub light_color: [f32; 4],
 }
 
 pub struct Renderer {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub bgl_frame: wgpu::BindGroupLayout,
-    pub bgl_obj: wgpu::BindGroupLayout,
-    pub bgl_mat: wgpu::BindGroupLayout,
-    pub default_view: wgpu::TextureView,
-    pub default_sampler: wgpu::Sampler,
+    pub bgl_obj: Arc<wgpu::BindGroupLayout>,
+    pub bgl_mat: Arc<wgpu::BindGroupLayout>,
+    pub default_view: Arc<wgpu::TextureView>,
+    pub default_sampler: Arc<wgpu::Sampler>,
     pub frame_buffer: wgpu::Buffer,
     pub frame_bind_group: wgpu::BindGroup,
     pub pipeline_opaque: wgpu::RenderPipeline,
+    pub pipeline_opaque_double_sided: wgpu::RenderPipeline,
     pub pipeline_transparent: wgpu::RenderPipeline,
+    pub pipeline_transparent_double_sided: wgpu::RenderPipeline,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub depth_size: (u32, u32),
     pub clear_color: wgpu::Color,
+    transparent_draws: Vec<(f32, usize, usize)>,
 }
 // #endregion
 
@@ -185,13 +194,8 @@ impl Renderer {
         bgl_frame: &wgpu::BindGroupLayout,
         bgl_obj: &wgpu::BindGroupLayout,
         bgl_mat: &wgpu::BindGroupLayout,
-        shader_source: &str,
-    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("WGSL Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
-        });
-
+        shader_src: &str,
+    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[bgl_frame, bgl_obj, bgl_mat],
@@ -228,81 +232,64 @@ impl Renderer {
             },
         ];
 
-        let blend_state = Some(wgpu::BlendState::ALPHA_BLENDING);
-
-        let pipeline_opaque = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Opaque Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: blend_state,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Standard PBR Shader Module"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_src)),
         });
 
-        let pipeline_transparent = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Transparent Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: blend_state,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let make_pipeline = |label: &str, depth_write: bool, cull: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: if depth_write {
+                            None
+                        } else {
+                            Some(wgpu::BlendState::ALPHA_BLENDING)
+                        },
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24Plus,
+                    depth_write_enabled: depth_write,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
 
-        (pipeline_opaque, pipeline_transparent)
+        let pipeline_opaque = make_pipeline("Opaque PBR Pipeline", true, Some(wgpu::Face::Back));
+        let pipeline_opaque_double_sided = make_pipeline("Opaque PBR Double Sided Pipeline", true, None);
+        let pipeline_transparent = make_pipeline("Transparent PBR Pipeline", false, Some(wgpu::Face::Back));
+        let pipeline_transparent_double_sided = make_pipeline("Transparent PBR Double Sided Pipeline", false, None);
+
+        (
+            pipeline_opaque,
+            pipeline_opaque_double_sided,
+            pipeline_transparent,
+            pipeline_transparent_double_sided,
+        )
     }
 
     fn create_depth_texture(
@@ -339,12 +326,18 @@ impl Renderer {
         }
     }
 
-    fn update_frame_uniforms(&self, view: Mat4, projection: Mat4, light_dir: Vec3) {
+    fn update_frame_uniforms(&self, view: Mat4, projection: Mat4, light: &SceneLight, cam_pos: Vec3) {
         let frame_uniforms = FrameUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
-            light_dir: light_dir.to_array(),
-            _padding: 0.0,
+            cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
+            light_dir: [light.direction.x, light.direction.y, light.direction.z, 0.0],
+            light_color: [
+                light.color[0],
+                light.color[1],
+                light.color[2],
+                light.intensity / LIGHT_INTENSITY_NORMALIZATION,
+            ],
         };
         self.queue.write_buffer(
             &self.frame_buffer,
@@ -353,12 +346,42 @@ impl Renderer {
         );
     }
 
+    fn build_transparent_draws(&mut self, view: Mat4, scene: &GltfScene) {
+        self.transparent_draws.clear();
+        for (node_index, node) in scene.render_nodes.iter().enumerate() {
+            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
+                continue;
+            };
+            for (prim_index, prim) in primitives.iter().enumerate() {
+                if !scene.materials[prim.material_index].is_transparent {
+                    continue;
+                }
+                let world_center = node.world_transform.transform_point3(prim.center);
+                let depth = view.transform_point3(world_center).z;
+                self.transparent_draws.push((depth, node_index, prim_index));
+            }
+        }
+        self.transparent_draws.sort_by(|a, b| a.0.total_cmp(&b.0));
+    }
+
+    fn pipeline_for(&self, material: &Material) -> &wgpu::RenderPipeline {
+        match (material.is_transparent, material.double_sided) {
+            (false, false) => &self.pipeline_opaque,
+            (false, true) => &self.pipeline_opaque_double_sided,
+            (true, false) => &self.pipeline_transparent,
+            (true, true) => &self.pipeline_transparent_double_sided,
+        }
+    }
+
     fn record_render_pass(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
+        view: Mat4,
         scene: &GltfScene,
     ) {
+        self.build_transparent_draws(view, scene);
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Main Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -383,79 +406,52 @@ impl Renderer {
 
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
-        for is_transparent in [false, true] {
-            let pipeline = if is_transparent {
-                &self.pipeline_transparent
-            } else {
-                &self.pipeline_opaque
+        for node in &scene.render_nodes {
+            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
+                continue;
             };
-            render_pass.set_pipeline(pipeline);
-
-            for node in &scene.render_nodes {
-                if let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) {
-                    render_pass.set_bind_group(1, &node.bind_group, &[]);
-
-                    for prim in primitives {
-                        let mat = &scene.materials[prim.material_index];
-                        if mat.is_transparent != is_transparent {
-                            continue;
-                        }
-
-                        render_pass.set_bind_group(2, &mat.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
-                        render_pass.set_vertex_buffer(1, prim.norm_buffer.slice(..));
-                        render_pass.set_vertex_buffer(2, prim.uv_buffer.slice(..));
-
-                        if let Some(index_buf) = &prim.index_buffer {
-                            render_pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                            render_pass.draw_indexed(0..prim.count, 0, 0..1);
-                        } else {
-                            render_pass.draw(0..prim.count, 0..1);
-                        }
-                    }
+            for prim in primitives {
+                let material = &scene.materials[prim.material_index];
+                if material.is_transparent {
+                    continue;
                 }
+                draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
             }
         }
-    }
 
-    fn assemble(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        bgl_frame: wgpu::BindGroupLayout,
-        bgl_obj: wgpu::BindGroupLayout,
-        bgl_mat: wgpu::BindGroupLayout,
-        default_view: wgpu::TextureView,
-        default_sampler: wgpu::Sampler,
-        frame_buffer: wgpu::Buffer,
-        frame_bind_group: wgpu::BindGroup,
-        pipeline_opaque: wgpu::RenderPipeline,
-        pipeline_transparent: wgpu::RenderPipeline,
-        depth_texture: wgpu::Texture,
-        depth_view: wgpu::TextureView,
-        depth_size: (u32, u32),
-    ) -> Self {
-        Self {
-            device,
-            queue,
-            bgl_frame,
-            bgl_obj,
-            bgl_mat,
-            default_view,
-            default_sampler,
-            frame_buffer,
-            frame_bind_group,
-            pipeline_opaque,
-            pipeline_transparent,
-            depth_texture,
-            depth_view,
-            depth_size,
-            clear_color: wgpu::Color {
-                r: 0.094,
-                g: 0.094,
-                b: 0.106,
-                a: 1.0,
-            },
+        for &(_, node_index, prim_index) in &self.transparent_draws {
+            let node = &scene.render_nodes[node_index];
+            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
+                continue;
+            };
+            let Some(prim) = primitives.get(prim_index) else {
+                continue;
+            };
+            let material = &scene.materials[prim.material_index];
+            draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
         }
+    }
+}
+
+fn draw_primitive(
+    render_pass: &mut wgpu::RenderPass,
+    pipeline: &wgpu::RenderPipeline,
+    node: &RenderNode,
+    prim: &GpuPrimitive,
+    material: &Material,
+) {
+    render_pass.set_pipeline(pipeline);
+    render_pass.set_bind_group(1, &node.bind_group, &[]);
+    render_pass.set_bind_group(2, &material.bind_group, &[]);
+    render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
+    render_pass.set_vertex_buffer(1, prim.norm_buffer.slice(..));
+    render_pass.set_vertex_buffer(2, prim.uv_buffer.slice(..));
+
+    if let Some(index_buf) = &prim.index_buffer {
+        render_pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..prim.count, 0, 0..1);
+    } else {
+        render_pass.draw(0..prim.count, 0..1);
     }
 }
 // #endregion
@@ -466,25 +462,83 @@ impl Renderer {
         device: wgpu::Device, queue: wgpu::Queue, surface_format: wgpu::TextureFormat,
         width: u32, height: u32, shader_source: &str,
     ) -> Self {
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
         let (default_view, default_sampler) = Self::create_default_texture(&device, &queue);
         let (bgl_frame, bgl_obj, bgl_mat) = Self::create_bind_group_layouts(&device);
         let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame);
-        let (pipeline_opaque, pipeline_transparent) =
-            Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_obj, &bgl_mat, shader_source);
+        let (
+            pipeline_opaque,
+            pipeline_opaque_double_sided,
+            pipeline_transparent,
+            pipeline_transparent_double_sided,
+        ) = Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_obj, &bgl_mat, shader_source);
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
 
-        println!("[Renderer-Init] Pipeline initialized successfully.");
-        Self::assemble(
-            device, queue, bgl_frame, bgl_obj, bgl_mat, default_view, default_sampler,
-            frame_buffer, frame_bind_group, pipeline_opaque, pipeline_transparent,
-            depth_texture, depth_view, (width, height),
-        )
+        crate::telemetry::log_info("Renderer", "Init", "Unified PBR pipelines initialized successfully.");
+
+        Self {
+            device,
+            queue,
+            bgl_frame,
+            bgl_obj: Arc::new(bgl_obj),
+            bgl_mat: Arc::new(bgl_mat),
+            default_view: Arc::new(default_view),
+            default_sampler: Arc::new(default_sampler),
+            frame_buffer,
+            frame_bind_group,
+            pipeline_opaque,
+            pipeline_opaque_double_sided,
+            pipeline_transparent,
+            pipeline_transparent_double_sided,
+            depth_texture,
+            depth_view,
+            depth_size: (width, height),
+            clear_color: wgpu::Color {
+                r: 0.42,
+                g: 0.65,
+                b: 0.85,
+                a: 1.0,
+            },
+            transparent_draws: Vec::new(),
+        }
     }
 
-    pub fn render_frame(&mut self, output: &wgpu::TextureView, view: Mat4, proj: Mat4, light: Vec3, scene: &GltfScene) {
-        self.update_frame_uniforms(view, proj, light);
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Frame Command Encoder") });
-        self.record_render_pass(&mut enc, output, scene);
+    pub fn render_clear(&self, output: &wgpu::TextureView) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Clear Command Encoder"),
+        });
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Clear Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    pub fn render_frame(
+        &mut self,
+        output: &wgpu::TextureView,
+        view: Mat4,
+        proj: Mat4,
+        light: &SceneLight,
+        cam_pos: Vec3,
+        scene: &GltfScene,
+    ) {
+        self.update_frame_uniforms(view, proj, light, cam_pos);
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Frame Command Encoder"),
+        });
+        self.record_render_pass(&mut enc, output, view, scene);
         self.queue.submit(std::iter::once(enc.finish()));
     }
 }
