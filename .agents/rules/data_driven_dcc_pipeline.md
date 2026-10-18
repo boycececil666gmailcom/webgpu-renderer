@@ -24,3 +24,7 @@ description: Project-local directive for data-driven DCC-to-Engine rendering pip
      c. Synchronize `base_scene.glb` to the target device via ADB push (`/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb`).
      d. Soft-restart `org.antigravity.webgpurenderer/android.app.NativeActivity` and capture a verification frame.
 
+5. **Shader-Aligned Texture Channel Pruning**:
+   - Do not link texture map nodes (such as Normal maps or separate Roughness maps) in Blender to Principled BSDF inputs unless the active engine WGSL shaders actively bind and evaluate them.
+   - For properties not evaluated as textures by the engine (e.g. metallic, roughness), configure scalar factor sliders directly on the BSDF to avoid serializing unreferenced binary image bloat into `base_scene.glb`.
+

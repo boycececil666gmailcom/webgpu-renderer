@@ -16,7 +16,7 @@ impl Config {
     fn create_default() -> Self {
         Self {
             target_fps: 60,
-            default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene_optimized.glb".to_string(),
+            default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
             max_texture_size: 2048,
         }
     }

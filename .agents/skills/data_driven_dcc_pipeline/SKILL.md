@@ -61,7 +61,18 @@ This skill defines the contract and execution protocols for synchronizing 3D sce
 
 ---
 
-## 4. Standard Export & Synchronization Procedure
+## 4. Shader-Aligned Texture Channel Pruning
+
+- **Core Principle**: Only connect texture channels in Blender that the active engine WGSL shaders bind and sample.
+- **Current Engine Shader (`standard_pbr.wgsl`) Scope**:
+  - Bound texture: `@group(2) @binding(1) mat_texture: texture_2d<f32>` (Albedo / Base Color only).
+  - Material properties (`metallic`, `roughness`, `clearcoat`): Evaluated strictly as scalar uniforms from `MaterialUniforms`.
+- **Constraint**: Do not plug separate Normal Map or Roughness Map textures into the Principled BSDF unless the WGSL shader pipeline has been upgraded to bind them. Linking unused 4K Normal/Roughness maps adds ~115 MB of dead buffer bloat that the glTF loader ignores at runtime.
+- **Material Setup**: Configure `Roughness` and `Metallic` as scalar slider values directly on the Principled BSDF node.
+
+---
+
+## 5. Standard Export & Synchronization Procedure
 
 ### Step 1: Export glTF from Blender
 ```bash

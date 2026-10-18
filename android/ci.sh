@@ -113,8 +113,7 @@ deploy_app() {
     local apk="$PROJECT_ROOT/bin/webgpurenderer-0.1.0-arm64-v8a-debug.apk"
     "$ADB" -s "$TARGET_SERIAL" install -r -d "$apk"
 
-    local gltf="$PROJECT_ROOT/gltf/base_scene_optimized.glb"
-    [ -f "$gltf" ] || gltf="$PROJECT_ROOT/gltf/base_scene.glb"
+    local gltf="$PROJECT_ROOT/gltf/base_scene.glb"
     if [ -f "$gltf" ]; then
         local name; name=$(basename "$gltf")
         local size; size=$(wc -c < "$gltf" | tr -d ' ')
