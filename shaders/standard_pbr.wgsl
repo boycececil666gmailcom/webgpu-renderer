@@ -6,11 +6,6 @@ struct FrameUniforms {
     light_color: vec4<f32>,
 };
 
-struct ObjectUniforms {
-    model: mat4x4<f32>,
-    normal_matrix: mat4x4<f32>,
-};
-
 struct MaterialUniforms {
     base_color: vec4<f32>,
     metallic: f32,
@@ -27,10 +22,9 @@ struct MaterialUniforms {
 @group(0) @binding(1) var env_map: texture_2d<f32>;
 @group(0) @binding(2) var env_sampler: sampler;
 
-@group(1) @binding(0) var<uniform> obj: ObjectUniforms;
-@group(2) @binding(0) var<uniform> mat: MaterialUniforms;
-@group(2) @binding(1) var mat_texture: texture_2d<f32>;
-@group(2) @binding(2) var mat_sampler: sampler;
+@group(1) @binding(0) var<uniform> mat: MaterialUniforms;
+@group(1) @binding(1) var mat_texture: texture_2d<f32>;
+@group(1) @binding(2) var mat_sampler: sampler;
 
 fn sample_equirect(dir: vec3<f32>, lod: f32) -> vec3<f32> {
     let pi = 3.14159265;
@@ -43,6 +37,14 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
+    @location(3) model_col0: vec4<f32>,
+    @location(4) model_col1: vec4<f32>,
+    @location(5) model_col2: vec4<f32>,
+    @location(6) model_col3: vec4<f32>,
+    @location(7) norm_col0: vec4<f32>,
+    @location(8) norm_col1: vec4<f32>,
+    @location(9) norm_col2: vec4<f32>,
+    @location(10) norm_col3: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -55,10 +57,22 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos4 = obj.model * vec4<f32>(in.position, 1.0);
+    let model = mat4x4<f32>(
+        in.model_col0,
+        in.model_col1,
+        in.model_col2,
+        in.model_col3,
+    );
+    let normal_matrix = mat4x4<f32>(
+        in.norm_col0,
+        in.norm_col1,
+        in.norm_col2,
+        in.norm_col3,
+    );
+    let world_pos4 = model * vec4<f32>(in.position, 1.0);
     out.world_pos = world_pos4.xyz;
     out.clip_position = frame.projection * frame.view * world_pos4;
-    let n4 = obj.normal_matrix * vec4<f32>(in.normal, 0.0);
+    let n4 = normal_matrix * vec4<f32>(in.normal, 0.0);
     out.normal = n4.xyz;
     out.tex_coords = in.tex_coords;
     return out;

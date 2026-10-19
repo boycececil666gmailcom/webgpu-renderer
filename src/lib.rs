@@ -56,11 +56,11 @@ fn compute_frame_budget(target_fps: u32) -> Duration {
 fn spawn_scene_load(
     renderer: &Renderer,
     model: String,
+    scatter_config: Option<String>,
     max_texture_size: u32,
 ) -> Option<Receiver<Result<GltfScene, String>>> {
     let device = Arc::clone(&renderer.device);
     let queue = Arc::clone(&renderer.queue);
-    let bgl_obj = Arc::clone(&renderer.bgl_obj);
     let bgl_mat = Arc::clone(&renderer.bgl_mat);
     let default_view = Arc::clone(&renderer.default_view);
     let default_sampler = Arc::clone(&renderer.default_sampler);
@@ -71,9 +71,9 @@ fn spawn_scene_load(
         .spawn(move || {
             let result = GltfScene::load(
                 &model,
+                scatter_config.as_deref(),
                 &device,
                 &queue,
-                &bgl_obj,
                 &bgl_mat,
                 &default_view,
                 &default_sampler,
@@ -201,7 +201,7 @@ fn init_render_state(
         &config.default_env_map,
     );
 
-    let scene_rx = spawn_scene_load(&renderer, config.default_model.clone(), config.max_texture_size)?;
+    let scene_rx = spawn_scene_load(&renderer, config.default_model.clone(), config.scatter_config.clone(), config.max_texture_size)?;
 
     let mut telemetry = TelemetryTracker::new();
     telemetry.set_resolution(width, height);

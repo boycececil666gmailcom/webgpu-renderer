@@ -32,13 +32,18 @@ LOG_DIR="$SCRIPT_DIR/logs"
 
 SDK="${ANDROID_HOME:-/c/Users/boyce/android_sdk/Sdk}"
 ADB="$SDK/platform-tools/adb"
+[ -f "${ADB}.exe" ] && ADB="${ADB}.exe"
 AAPT2="$SDK/build-tools/36.0.0/aapt2"
+[ -f "${AAPT2}.exe" ] && AAPT2="${AAPT2}.exe"
 ZIPALIGN="$SDK/build-tools/36.0.0/zipalign"
+[ -f "${ZIPALIGN}.exe" ] && ZIPALIGN="${ZIPALIGN}.exe"
 APKSIGNER="$SDK/build-tools/36.0.0/lib/apksigner.jar"
 EMULATOR="$SDK/emulator/emulator"
+[ -f "${EMULATOR}.exe" ] && EMULATOR="${EMULATOR}.exe"
 JAR="$SDK/platforms/android-36/android.jar"
 KEYSTORE="${USERPROFILE:-$HOME}/.android/debug.keystore"
-export PATH="${HOME}/.cargo/bin:${USERPROFILE}/.cargo/bin:/c/Users/boyce/.cargo/bin:$PATH"
+LLVM_MINGW_BIN="/c/Users/boyce/AppData/Local/Microsoft/WinGet/Packages/MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/llvm-mingw-20260908-ucrt-x86_64/bin"
+export PATH="${LLVM_MINGW_BIN}:${HOME}/.cargo/bin:${USERPROFILE}/.cargo/bin:/c/Users/boyce/.cargo/bin:$PATH"
 #endregion
 
 #region Scaffolding
@@ -113,34 +118,27 @@ deploy_app() {
     local apk="$PROJECT_ROOT/bin/webgpurenderer-0.1.0-arm64-v8a-debug.apk"
     "$ADB" -s "$TARGET_SERIAL" install -r -d "$apk"
 
-    local gltf="$PROJECT_ROOT/gltf/base_scene.glb"
-    if [ -f "$gltf" ]; then
-        local name; name=$(basename "$gltf")
-        local size; size=$(wc -c < "$gltf" | tr -d ' ')
-        local remote; remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "ls -l /sdcard/Android/data/$PACKAGE/files/$name 2>/dev/null" | tr -d '\r')
-        if [[ "$remote" != *"$size"* ]]; then
-            local win_gltf; win_gltf=$(cygpath -w "$gltf" 2>/dev/null || echo "$gltf")
-            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell mkdir -p "/sdcard/Android/data/$PACKAGE/files" >/dev/null 2>&1 || true
-            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" push "$win_gltf" "/sdcard/Android/data/$PACKAGE/files/$name" >/dev/null
-        else
-            echo "[CI-Deploy] 3D asset is already synced."
+    sync_file() {
+        local src="$1"
+        if [ -f "$src" ]; then
+            local name; name=$(basename "$src")
+            local size; size=$(wc -c < "$src" | tr -d ' ')
+            local remote; remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "ls -l /sdcard/Android/data/$PACKAGE/files/$name 2>/dev/null" | tr -d '\r')
+            if [[ "$remote" != *"$size"* ]]; then
+                local win_src; win_src=$(cygpath -w "$src" 2>/dev/null || echo "$src")
+                MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell mkdir -p "/sdcard/Android/data/$PACKAGE/files" >/dev/null 2>&1 || true
+                MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" push "$win_src" "/sdcard/Android/data/$PACKAGE/files/$name" >/dev/null
+                echo "[CI-Deploy] Synced $name to device."
+            else
+                echo "[CI-Deploy] $name is already synced."
+            fi
         fi
-    fi
+    }
 
-    local env_tex="$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
-    if [ -f "$env_tex" ]; then
-        local env_name; env_name=$(basename "$env_tex")
-        local env_size; env_size=$(wc -c < "$env_tex" | tr -d ' ')
-        local env_remote; env_remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "ls -l /sdcard/Android/data/$PACKAGE/files/$env_name 2>/dev/null" | tr -d '\r')
-        if [[ "$env_remote" != *"$env_size"* ]]; then
-            local win_env; win_env=$(cygpath -w "$env_tex" 2>/dev/null || echo "$env_tex")
-            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell mkdir -p "/sdcard/Android/data/$PACKAGE/files" >/dev/null 2>&1 || true
-            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" push "$win_env" "/sdcard/Android/data/$PACKAGE/files/$env_name" >/dev/null
-            echo "[CI-Deploy] Environment map synced to device."
-        else
-            echo "[CI-Deploy] Environment map is already synced."
-        fi
-    fi
+    sync_file "$PROJECT_ROOT/gltf/base_scene.glb"
+    sync_file "$PROJECT_ROOT/gltf/leaves.glb"
+    sync_file "$PROJECT_ROOT/config/scatter.json"
+    sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
 }
 
 stream_telemetry() {
@@ -190,14 +188,12 @@ stream_telemetry() {
 
 #region Core
 echo -e "\033[1;36m[CI-Core] WebGPU Pipeline (${MODE})\033[0m"
-ensure_emulator
-
 case "$MODE" in
-    emulator) ;;
-    monitor)  DURATION=0; stream_telemetry ;;
+    emulator) ensure_emulator ;;
+    monitor)  ensure_emulator; DURATION=0; stream_telemetry ;;
     build)    build_and_package ;;
-    deploy)   deploy_app; stream_telemetry ;;
-    full)     build_and_package; deploy_app; stream_telemetry ;;
+    deploy)   ensure_emulator; deploy_app; stream_telemetry ;;
+    full)     ensure_emulator; build_and_package; deploy_app; stream_telemetry ;;
 esac
 echo -e "\033[1;32m[CI-Core] Execution complete.\033[0m"
 #endregion

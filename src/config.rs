@@ -9,6 +9,7 @@ pub struct Config {
     pub default_model: String,
     pub default_env_map: String,
     pub max_texture_size: u32,
+    pub scatter_config: Option<String>,
 }
 // #endregion
 
@@ -20,6 +21,7 @@ impl Config {
             default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
             default_env_map: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/autumn_forest_01_1k.png".to_string(),
             max_texture_size: 2048,
+            scatter_config: Some("/sdcard/Android/data/org.antigravity.webgpurenderer/files/scatter.json".to_string()),
         }
     }
 }

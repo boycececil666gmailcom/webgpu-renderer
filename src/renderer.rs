@@ -25,7 +25,6 @@ pub struct Renderer {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub bgl_frame: wgpu::BindGroupLayout,
-    pub bgl_obj: Arc<wgpu::BindGroupLayout>,
     pub bgl_mat: Arc<wgpu::BindGroupLayout>,
     pub default_view: Arc<wgpu::TextureView>,
     pub default_sampler: Arc<wgpu::Sampler>,
@@ -103,7 +102,7 @@ impl Renderer {
 
     fn create_bind_group_layouts(
         device: &wgpu::Device,
-    ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
+    ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
         let bgl_frame = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Frame BindGroupLayout"),
             entries: &[
@@ -134,20 +133,6 @@ impl Renderer {
                     count: None,
                 },
             ],
-        });
-
-        let bgl_obj = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Object BindGroupLayout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
         });
 
         let bgl_mat = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -182,7 +167,7 @@ impl Renderer {
             ],
         });
 
-        (bgl_frame, bgl_obj, bgl_mat)
+        (bgl_frame, bgl_mat)
     }
 
     fn load_environment_texture(
@@ -314,13 +299,12 @@ impl Renderer {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         bgl_frame: &wgpu::BindGroupLayout,
-        bgl_obj: &wgpu::BindGroupLayout,
         bgl_mat: &wgpu::BindGroupLayout,
         shader_src: &str,
     ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[bgl_frame, bgl_obj, bgl_mat],
+            bind_group_layouts: &[bgl_frame, bgl_mat],
             push_constant_ranges: &[],
         });
 
@@ -351,6 +335,52 @@ impl Renderer {
                     offset: 0,
                     shader_location: 2,
                 }],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 128,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 0,
+                        shader_location: 3,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 16,
+                        shader_location: 4,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 32,
+                        shader_location: 5,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 48,
+                        shader_location: 6,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 64,
+                        shader_location: 7,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 80,
+                        shader_location: 8,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 96,
+                        shader_location: 9,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 112,
+                        shader_location: 10,
+                    },
+                ],
             },
         ];
 
@@ -563,22 +593,22 @@ fn draw_primitive(
     material: &Material,
 ) {
     render_pass.set_pipeline(pipeline);
-    render_pass.set_bind_group(1, &node.bind_group, &[]);
-    render_pass.set_bind_group(2, &material.bind_group, &[]);
+    render_pass.set_bind_group(1, &material.bind_group, &[]);
     render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
     render_pass.set_vertex_buffer(1, prim.norm_buffer.slice(..));
     render_pass.set_vertex_buffer(2, prim.uv_buffer.slice(..));
+    render_pass.set_vertex_buffer(3, node.instance_buffer.slice(..));
 
     if let Some(index_buf) = &prim.index_buffer {
         render_pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..prim.count, 0, 0..1);
+        render_pass.draw_indexed(0..prim.count, 0, 0..node.instance_count);
     } else {
-        render_pass.draw(0..prim.count, 0..1);
+        render_pass.draw(0..prim.count, 0..node.instance_count);
     }
 }
 // #endregion
 
-// #region Core
+// #region Engine
 impl Renderer {
     pub fn new(
         device: wgpu::Device,
@@ -593,14 +623,14 @@ impl Renderer {
         let queue = Arc::new(queue);
         let (default_view, default_sampler) = Self::create_default_texture(&device, &queue);
         let (env_view, env_sampler) = Self::load_environment_texture(&device, &queue, env_map_path);
-        let (bgl_frame, bgl_obj, bgl_mat) = Self::create_bind_group_layouts(&device);
+        let (bgl_frame, bgl_mat) = Self::create_bind_group_layouts(&device);
         let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame, &env_view, &env_sampler);
         let (
             pipeline_opaque,
             pipeline_opaque_double_sided,
             pipeline_transparent,
             pipeline_transparent_double_sided,
-        ) = Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_obj, &bgl_mat, shader_source);
+        ) = Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_mat, shader_source);
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
 
         crate::telemetry::log_info("Renderer", "Init", "Unified PBR pipelines initialized successfully.");
@@ -609,7 +639,6 @@ impl Renderer {
             device,
             queue,
             bgl_frame,
-            bgl_obj: Arc::new(bgl_obj),
             bgl_mat: Arc::new(bgl_mat),
             default_view: Arc::new(default_view),
             default_sampler: Arc::new(default_sampler),
@@ -654,7 +683,11 @@ impl Renderer {
         });
         self.queue.submit(std::iter::once(encoder.finish()));
     }
+}
+// #endregion
 
+// #region Core
+impl Renderer {
     pub fn render_frame(
         &mut self,
         output: &wgpu::TextureView,

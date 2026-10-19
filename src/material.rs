@@ -69,20 +69,10 @@ impl Material {
 impl Material {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        default_view: &wgpu::TextureView,
-        default_sampler: &wgpu::Sampler,
-        texture_view: Option<&wgpu::TextureView>,
-        base_color: [f32; 4],
-        metallic: f32,
-        roughness: f32,
-        clearcoat: f32,
-        alpha_cutoff: f32,
-        alpha_mode: u32,
-        is_unlit: bool,
-        is_transparent: bool,
-        double_sided: bool,
+        device: &wgpu::Device, layout: &wgpu::BindGroupLayout, default_view: &wgpu::TextureView,
+        default_sampler: &wgpu::Sampler, texture_view: Option<&wgpu::TextureView>, base_color: [f32; 4],
+        metallic: f32, roughness: f32, clearcoat: f32, alpha_cutoff: f32,
+        alpha_mode: u32, is_unlit: bool, is_transparent: bool, double_sided: bool,
     ) -> Self {
         let has_texture = texture_view.is_some();
         let view = texture_view.unwrap_or(default_view);

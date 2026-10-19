@@ -1,9 +1,8 @@
 // #region Imports
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use glam::{Mat3, Mat4, Vec3};
+use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
 use crate::material::Material;
@@ -12,9 +11,19 @@ use crate::material::Material;
 // #region Types
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ObjectUniforms {
+pub struct InstanceRaw {
     pub model: [[f32; 4]; 4],
     pub normal_matrix: [[f32; 4]; 4],
+}
+
+impl InstanceRaw {
+    pub fn from_transform(model: Mat4) -> Self {
+        let normal_matrix = Mat4::from_mat3(Mat3::from_mat4(model).inverse().transpose());
+        Self {
+            model: model.to_cols_array_2d(),
+            normal_matrix: normal_matrix.to_cols_array_2d(),
+        }
+    }
 }
 
 pub struct GpuPrimitive {
@@ -28,10 +37,55 @@ pub struct GpuPrimitive {
 }
 
 pub struct RenderNode {
+    pub name: Option<String>,
     pub world_transform: Mat4,
-    pub uniform_buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub instance_buffer: wgpu::Buffer,
+    pub instance_count: u32,
     pub mesh_index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct RawPrimitiveData {
+    pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub indices: Vec<u32>,
+    pub color0: Vec<[f32; 4]>,
+    pub color1: Vec<[f32; 4]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SurfaceData {
+    pub name: String,
+    pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub indices: Vec<u32>,
+    pub color0: Vec<[f32; 4]>,
+    pub color1: Vec<[f32; 4]>,
+    pub world_transform: Mat4,
+}
+
+fn default_true() -> bool { true }
+fn default_channel() -> u32 { 1 }
+fn default_component() -> String { "R".to_string() }
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct ScatterRule {
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub prototype_asset: String,
+    pub target_surface_node: String,
+    #[serde(default = "default_channel")]
+    pub weight_channel: u32,
+    #[serde(default = "default_component")]
+    pub weight_component: String,
+    pub count: usize,
+    pub seed: u64,
+    pub scale_min: f32,
+    pub scale_max: f32,
+    pub normal_offset: f32,
+    #[serde(default = "default_true")]
+    pub yaw_random: bool,
 }
 
 pub struct SceneCamera {
@@ -92,97 +146,51 @@ impl GltfScene {
         })
     }
 
-    fn image_bytes<'a>(
-        image: &gltf::Image,
-        buffers: &'a [gltf::buffer::Data],
-        base: &Path,
-    ) -> Option<Cow<'a, [u8]>> {
-        match image.source() {
+    fn downsample_image(img: image::DynamicImage, max_size: u32) -> (Vec<u8>, u32, u32) {
+        let (w, h) = img.dimensions();
+        let scaled = if w > max_size || h > max_size {
+            let aspect = w as f32 / h as f32;
+            let (target_w, target_h) = if w > h {
+                (max_size, (max_size as f32 / aspect).round() as u32)
+            } else {
+                ((max_size as f32 * aspect).round() as u32, max_size)
+            };
+            img.resize(target_w.max(1), target_h.max(1), image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+        let (nw, nh) = scaled.dimensions();
+        (scaled.to_rgba8().into_raw(), nw, nh)
+    }
+
+    fn decode_image_data(source: &gltf::image::Source, base_path: Option<&Path>, buffers: &[gltf::buffer::Data], max_size: u32) -> Option<TextureData> {
+        match source {
             gltf::image::Source::View { view, .. } => {
-                let buffer = view.buffer();
-                let data: &'a [u8] = &buffers[buffer.index()];
                 let start = view.offset();
                 let end = start + view.length();
-                data.get(start..end).map(Cow::Borrowed)
+                let data = &buffers[view.buffer().index()][start..end];
+                let decoded = image::load_from_memory(data).ok()?;
+                let (rgba, width, height) = Self::downsample_image(decoded, max_size);
+                Some(TextureData { rgba, width, height })
             }
             gltf::image::Source::Uri { uri, .. } => {
-                if uri.starts_with("data:") {
-                    crate::telemetry::log_warn("GltfLoader", "Texture", &format!("Unsupported data URI image: {uri}"));
-                    None
-                } else {
-                    std::fs::read(base.join(uri)).ok().map(Cow::Owned)
-                }
+                let path = base_path.unwrap_or_else(|| Path::new(".")).join(uri);
+                let decoded = image::open(&path).ok()?;
+                let (rgba, width, height) = Self::downsample_image(decoded, max_size);
+                Some(TextureData { rgba, width, height })
             }
         }
     }
 
-    fn decode_texture(bytes: &[u8], max_texture_size: u32) -> Result<TextureData, Box<dyn std::error::Error>> {
-        let decoded = image::load_from_memory(bytes)?.to_rgba8();
-        let (width, height) = decoded.dimensions();
-        let longest = width.max(height);
-
-        if max_texture_size > 0 && longest > max_texture_size {
-            let scale = max_texture_size as f32 / longest as f32;
-            let new_width = ((width as f32 * scale).round() as u32).max(1);
-            let new_height = ((height as f32 * scale).round() as u32).max(1);
-            let resized = image::imageops::resize(
-                &decoded,
-                new_width,
-                new_height,
-                image::imageops::FilterType::Lanczos3,
-            );
-            Ok(TextureData {
-                rgba: resized.into_raw(),
-                width: new_width,
-                height: new_height,
-            })
-        } else {
-            Ok(TextureData { rgba: decoded.into_raw(), width, height })
-        }
-    }
-
-    fn load_textures(
+    fn process_textures(
         doc: &gltf::Document,
+        base_path: Option<&Path>,
         buffers: &[gltf::buffer::Data],
-        base: &Path,
-        max_texture_size: u32,
-    ) -> HashMap<usize, TextureData> {
-        let needed: HashSet<usize> = doc
-            .materials()
-            .filter_map(|mat| {
-                mat.pbr_metallic_roughness()
-                    .base_color_texture()
-                    .map(|info| info.texture().source().index())
-            })
-            .collect();
-        let images: Vec<gltf::Image> = doc.images().collect();
-        let mut textures = HashMap::new();
-
-        for index in needed {
-            let Some(image) = images.get(index) else {
-                crate::telemetry::log_warn("GltfLoader", "Texture", &format!("Missing image index {index}"));
-                continue;
-            };
-            let Some(bytes) = Self::image_bytes(image, buffers, base) else {
-                crate::telemetry::log_warn("GltfLoader", "Texture", &format!("Unreadable image '{}'", image.name().unwrap_or("unnamed")));
-                continue;
-            };
-            let decode_start = std::time::Instant::now();
-            match Self::decode_texture(&bytes, max_texture_size) {
-                Ok(texture) => {
-                    crate::telemetry::log_info("GltfLoader", "Texture", &format!(
-                        "{} decoded to {}x{} in {:?}",
-                        image.name().unwrap_or("unnamed"), texture.width, texture.height, decode_start.elapsed()
-                    ));
-                    textures.insert(index, texture);
-                }
-                Err(error) => {
-                    crate::telemetry::log_warn("GltfLoader", "Texture", &format!("Decode failed for '{}': {error:?}", image.name().unwrap_or("unnamed")));
-                }
-            }
-        }
-
-        textures
+        max_size: u32,
+    ) -> Vec<Option<TextureData>> {
+        doc.textures()
+            .map(|tex| Self::decode_image_data(&tex.source().source(), base_path, buffers, max_size))
+            .collect()
     }
 
     fn create_texture_view(device: &wgpu::Device, queue: &wgpu::Queue, data: &TextureData) -> wgpu::TextureView {
@@ -238,17 +246,17 @@ impl GltfScene {
 
     fn build_materials(
         doc: &gltf::Document,
-        textures: &HashMap<usize, TextureData>,
+        textures: &[Option<TextureData>],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bgl_mat: &wgpu::BindGroupLayout,
         default_view: &wgpu::TextureView,
         default_sampler: &wgpu::Sampler,
     ) -> Vec<Material> {
+        let root = doc.as_json();
         let mut texture_views: HashMap<usize, wgpu::TextureView> = HashMap::new();
         let mut materials = Vec::new();
 
-        let root = doc.as_json();
         for mat in doc.materials() {
             let pbr = mat.pbr_metallic_roughness();
             let base_color = pbr.base_color_factor();
@@ -269,16 +277,14 @@ impl GltfScene {
                 .and_then(|cf| cf.as_f64())
                 .map(|f| f as f32)
                 .unwrap_or(0.0);
-            let texture_index = pbr
-                .base_color_texture()
-                .map(|info| info.texture().source().index());
-            let texture_view = texture_index.and_then(|index| {
-                textures.get(&index).map(|data| {
-                    let view = texture_views
-                        .entry(index)
-                        .or_insert_with(|| Self::create_texture_view(device, queue, data));
-                    &*view
-                })
+
+            let texture_view = pbr.base_color_texture().and_then(|info| {
+                let tex_idx = info.texture().index();
+                let td = textures.get(tex_idx)?.as_ref()?;
+                let view = texture_views
+                    .entry(tex_idx)
+                    .or_insert_with(|| Self::create_texture_view(device, queue, td));
+                Some(&*view)
             });
 
             materials.push(Material::new(
@@ -323,31 +329,29 @@ impl GltfScene {
     fn build_primitives(
         doc: &gltf::Document,
         buffers: &[gltf::buffer::Data],
+        mat_offset: usize,
         materials_len: usize,
         device: &wgpu::Device,
-    ) -> (Vec<Vec<GpuPrimitive>>, Vec<(Vec3, Vec3)>) {
-        let built: Vec<(Vec<GpuPrimitive>, (Vec3, Vec3))> = doc
-            .meshes()
+    ) -> (Vec<Vec<GpuPrimitive>>, Vec<(Vec3, Vec3)>, Vec<Vec<RawPrimitiveData>>) {
+        let built: Vec<_> = doc.meshes()
             .map(|mesh| {
                 let mut mesh_min = Vec3::splat(f32::MAX);
                 let mut mesh_max = Vec3::splat(f32::MIN);
+                let mut raw_prims = Vec::new();
 
-                let primitives: Vec<GpuPrimitive> = mesh
-                    .primitives()
+                let primitives: Vec<GpuPrimitive> = mesh.primitives()
                     .filter_map(|prim| {
                         let reader = prim.reader(|b| Some(&buffers[b.index()]));
                         let positions: Vec<[f32; 3]> = reader.read_positions()?.collect();
-
                         let mut prim_min = Vec3::splat(f32::MAX);
                         let mut prim_max = Vec3::splat(f32::MIN);
                         for p in &positions {
                             let v = Vec3::from_slice(p);
+                            mesh_min = mesh_min.min(v);
+                            mesh_max = mesh_max.max(v);
                             prim_min = prim_min.min(v);
                             prim_max = prim_max.max(v);
                         }
-                        mesh_min = mesh_min.min(prim_min);
-                        mesh_max = mesh_max.max(prim_max);
-
                         let normals: Vec<[f32; 3]> = reader
                             .read_normals()
                             .map(|n| n.collect())
@@ -364,6 +368,27 @@ impl GltfScene {
                             (prim_min + prim_max) * 0.5
                         };
 
+                        let color0: Vec<[f32; 4]> = reader
+                            .read_colors(0)
+                            .map(|c| c.into_rgba_f32().collect())
+                            .unwrap_or_default();
+
+                        let color1: Vec<[f32; 4]> = reader
+                            .read_colors(1)
+                            .map(|c| c.into_rgba_f32().collect())
+                            .unwrap_or_default();
+
+                        raw_prims.push(RawPrimitiveData {
+                            positions: positions.iter().map(|p| Vec3::from_slice(p)).collect(),
+                            normals: normals.iter().map(|n| Vec3::from_slice(n)).collect(),
+                            indices: indices.clone().unwrap_or_else(|| (0..positions.len() as u32).collect()),
+                            color0,
+                            color1,
+                        });
+
+                        let local_mat_idx = prim.material().index().unwrap_or(0);
+                        let final_mat_idx = (mat_offset + local_mat_idx).min(materials_len - 1);
+
                         Some(GpuPrimitive {
                             pos_buffer: Self::create_buffer(device, "Pos", bytemuck::cast_slice(&positions), wgpu::BufferUsages::VERTEX),
                             norm_buffer: Self::create_buffer(device, "Norm", bytemuck::cast_slice(&normals), wgpu::BufferUsages::VERTEX),
@@ -372,7 +397,7 @@ impl GltfScene {
                                 Self::create_buffer(device, "Idx", bytemuck::cast_slice(idx), wgpu::BufferUsages::INDEX)
                             }),
                             count,
-                            material_index: prim.material().index().unwrap_or(0).min(materials_len - 1),
+                            material_index: final_mat_idx,
                             center,
                         })
                     })
@@ -383,17 +408,19 @@ impl GltfScene {
                 } else {
                     (Vec3::ZERO, Vec3::ZERO)
                 };
-                (primitives, bounds)
+                (primitives, bounds, raw_prims)
             })
             .collect();
 
         let mut primitives_by_mesh = Vec::with_capacity(built.len());
         let mut mesh_bounds = Vec::with_capacity(built.len());
-        for (primitives, bounds) in built {
+        let mut raw_by_mesh = Vec::with_capacity(built.len());
+        for (primitives, bounds, raw_prims) in built {
             primitives_by_mesh.push(primitives);
             mesh_bounds.push(bounds);
+            raw_by_mesh.push(raw_prims);
         }
-        (primitives_by_mesh, mesh_bounds)
+        (primitives_by_mesh, mesh_bounds, raw_by_mesh)
     }
 
     fn expand_bounds(min: Vec3, max: Vec3, transform: &Mat4, bounds_min: &mut Vec3, bounds_max: &mut Vec3) {
@@ -412,10 +439,11 @@ impl GltfScene {
     fn build_render_nodes(
         doc: &gltf::Document,
         device: &wgpu::Device,
-        bgl_obj: &wgpu::BindGroupLayout,
         mesh_bounds: &[(Vec3, Vec3)],
-    ) -> (Vec<RenderNode>, Vec<SceneCamera>, Vec<SceneLight>, (Vec3, Vec3)) {
+        raw_by_mesh: &[Vec<RawPrimitiveData>],
+    ) -> (Vec<RenderNode>, HashMap<String, SurfaceData>, Vec<SceneCamera>, Vec<SceneLight>, (Vec3, Vec3)) {
         let mut render_nodes = Vec::new();
+        let mut surfaces = HashMap::new();
         let mut cameras = Vec::new();
         let mut lights = Vec::new();
         let mut bounds_min = Vec3::splat(f32::MAX);
@@ -430,31 +458,56 @@ impl GltfScene {
 
         while let Some((node, parent_transform)) = stack.pop() {
             let world_transform = parent_transform * Mat4::from_cols_array_2d(&node.transform().matrix());
+            let node_name = node.name().map(String::from);
 
             if let Some(mesh) = node.mesh() {
-                let normal_matrix = Mat4::from_mat3(Mat3::from_mat4(world_transform).inverse().transpose());
-                let uniforms = ObjectUniforms {
-                    model: world_transform.to_cols_array_2d(),
-                    normal_matrix: normal_matrix.to_cols_array_2d(),
-                };
-                let uniform_buffer = Self::create_buffer(device, "ObjectUniform", bytemuck::bytes_of(&uniforms), wgpu::BufferUsages::UNIFORM);
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Object BindGroup"),
-                    layout: bgl_obj,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    }],
-                });
+                let mesh_index = mesh.index();
+                if let Some(prims) = raw_by_mesh.get(mesh_index) {
+                    let mut pos = Vec::new();
+                    let mut norm = Vec::new();
+                    let mut idx = Vec::new();
+                    let mut c0 = Vec::new();
+                    let mut c1 = Vec::new();
+                    let mut base = 0u32;
+                    for p in prims {
+                        pos.extend_from_slice(&p.positions);
+                        norm.extend_from_slice(&p.normals);
+                        c0.extend_from_slice(&p.color0);
+                        c1.extend_from_slice(&p.color1);
+                        for &i in &p.indices {
+                            idx.push(i + base);
+                        }
+                        base += p.positions.len() as u32;
+                    }
+                    if let Some(name) = &node_name {
+                        surfaces.insert(name.clone(), SurfaceData {
+                            name: name.clone(),
+                            positions: pos,
+                            normals: norm,
+                            indices: idx,
+                            color0: c0,
+                            color1: c1,
+                            world_transform,
+                        });
+                    }
+                }
 
+                let raw = InstanceRaw::from_transform(world_transform);
+                let instance_buffer = Self::create_buffer(
+                    device,
+                    "NodeInstance",
+                    bytemuck::bytes_of(&raw),
+                    wgpu::BufferUsages::VERTEX,
+                );
                 render_nodes.push(RenderNode {
+                    name: node_name.clone(),
                     world_transform,
-                    uniform_buffer,
-                    bind_group,
-                    mesh_index: mesh.index(),
+                    instance_buffer,
+                    instance_count: 1,
+                    mesh_index,
                 });
 
-                if let Some(&(min, max)) = mesh_bounds.get(mesh.index()) {
+                if let Some(&(min, max)) = mesh_bounds.get(mesh_index) {
                     Self::expand_bounds(min, max, &world_transform, &mut bounds_min, &mut bounds_max);
                 }
             }
@@ -465,7 +518,7 @@ impl GltfScene {
                     gltf::camera::Projection::Orthographic(o) => (o.ymag(), o.znear(), Some(o.zfar())),
                 };
                 cameras.push(SceneCamera {
-                    name: cam.name().map(String::from).or_else(|| node.name().map(String::from)),
+                    name: cam.name().map(String::from).or_else(|| node_name.clone()),
                     world_transform,
                     yfov,
                     znear,
@@ -481,7 +534,7 @@ impl GltfScene {
                     Vec3::Y
                 };
                 lights.push(SceneLight {
-                    name: light.name().map(String::from).or_else(|| node.name().map(String::from)),
+                    name: light.name().map(String::from).or_else(|| node_name.clone()),
                     direction,
                     color: light.color(),
                     intensity: light.intensity(),
@@ -498,7 +551,8 @@ impl GltfScene {
         } else {
             (Vec3::splat(-1.0), Vec3::splat(1.0))
         };
-        (render_nodes, cameras, lights, bounds)
+
+        (render_nodes, surfaces, cameras, lights, bounds)
     }
 
     fn create_fallback_camera(bounds: &(Vec3, Vec3)) -> SceneCamera {
@@ -547,43 +601,293 @@ impl GltfScene {
 }
 // #endregion
 
-// #region Core
+// #region Scatter
+struct LcgRng(u64);
+impl LcgRng {
+    fn new(seed: u64) -> Self {
+        Self(seed.max(1))
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0
+    }
+    fn next_f32(&mut self) -> f32 {
+        (self.next_u64() >> 32) as f32 / 4294967296.0
+    }
+}
+
+fn resolve_surface_weights(surface: &SurfaceData, channel: u32, component: &str) -> Vec<f32> {
+    let comp_idx = match component.to_uppercase().as_str() {
+        "R" | "0" => 0,
+        "G" | "1" => 1,
+        "B" | "2" => 2,
+        "A" | "3" => 3,
+        _ => 0,
+    };
+    if channel == 1 && !surface.color1.is_empty() {
+        surface.color1.iter().map(|c| c[comp_idx]).collect()
+    } else if !surface.color0.is_empty() {
+        surface.color0.iter().map(|c| c[comp_idx]).collect()
+    } else {
+        vec![1.0; surface.positions.len()]
+    }
+}
+
+fn scatter_instances_on_surface(
+    surface: &SurfaceData,
+    weights: &[f32],
+    rule: &ScatterRule,
+) -> Vec<InstanceRaw> {
+    let tri_count = surface.indices.len() / 3;
+    if tri_count == 0 || surface.positions.is_empty() {
+        return Vec::new();
+    }
+
+    let mut cdf: Vec<f32> = Vec::with_capacity(tri_count);
+    let mut running_sum = 0.0f32;
+
+    for i in 0..tri_count {
+        let i0 = surface.indices[3 * i] as usize;
+        let i1 = surface.indices[3 * i + 1] as usize;
+        let i2 = surface.indices[3 * i + 2] as usize;
+
+        let p0 = surface.world_transform.transform_point3(surface.positions[i0]);
+        let p1 = surface.world_transform.transform_point3(surface.positions[i1]);
+        let p2 = surface.world_transform.transform_point3(surface.positions[i2]);
+
+        let cross = (p1 - p0).cross(p2 - p0);
+        let area = 0.5 * cross.length();
+
+        let w0 = weights.get(i0).copied().unwrap_or(1.0);
+        let w1 = weights.get(i1).copied().unwrap_or(1.0);
+        let w2 = weights.get(i2).copied().unwrap_or(1.0);
+        let avg_w = (w0 + w1 + w2) / 3.0;
+
+        let tri_w = area * avg_w;
+        running_sum += tri_w;
+        cdf.push(running_sum);
+    }
+
+    if running_sum <= 1e-6 {
+        return Vec::new();
+    }
+
+    let mut rng = LcgRng::new(rule.seed);
+    let mut instances = Vec::with_capacity(rule.count);
+    let normal_transform = Mat4::from_mat3(Mat3::from_mat4(surface.world_transform).inverse().transpose());
+    let scale_range = (rule.scale_max - rule.scale_min).max(0.0);
+
+    for _ in 0..rule.count {
+        let target = rng.next_f32() * running_sum;
+        let tri_idx = match cdf.binary_search_by(|val| val.total_cmp(&target)) {
+            Ok(idx) => idx.min(tri_count - 1),
+            Err(idx) => idx.min(tri_count - 1),
+        };
+
+        let i0 = surface.indices[3 * tri_idx] as usize;
+        let i1 = surface.indices[3 * tri_idx + 1] as usize;
+        let i2 = surface.indices[3 * tri_idx + 2] as usize;
+
+        let p0 = surface.world_transform.transform_point3(surface.positions[i0]);
+        let p1 = surface.world_transform.transform_point3(surface.positions[i1]);
+        let p2 = surface.world_transform.transform_point3(surface.positions[i2]);
+
+        let n0 = normal_transform.transform_vector3(surface.normals[i0]);
+        let n1 = normal_transform.transform_vector3(surface.normals[i1]);
+        let n2 = normal_transform.transform_vector3(surface.normals[i2]);
+
+        let r1 = rng.next_f32();
+        let r2 = rng.next_f32();
+        let sqrt_r1 = r1.sqrt();
+        let u = 1.0 - sqrt_r1;
+        let v = r2 * sqrt_r1;
+        let w = 1.0 - u - v;
+
+        let pos = p0 * u + p1 * v + p2 * w;
+        let norm = (n0 * u + n1 * v + n2 * w).normalize();
+
+        let up = if norm.y.abs() < 0.99 { Vec3::Y } else { Vec3::X };
+        let tangent = up.cross(norm).normalize();
+        let bitangent = norm.cross(tangent);
+
+        let (rot_tangent, rot_bitangent) = if rule.yaw_random {
+            let yaw = rng.next_f32() * std::f32::consts::TAU;
+            let cos_y = yaw.cos();
+            let sin_y = yaw.sin();
+            (tangent * cos_y + bitangent * sin_y, -tangent * sin_y + bitangent * cos_y)
+        } else {
+            (tangent, bitangent)
+        };
+
+        let scale = rule.scale_min + rng.next_f32() * scale_range;
+        let offset_pos = pos + norm * rule.normal_offset;
+
+        let model = Mat4::from_cols(
+            (rot_tangent * scale).extend(0.0),
+            (norm * scale).extend(0.0),
+            (rot_bitangent * scale).extend(0.0),
+            offset_pos.extend(1.0),
+        );
+
+        instances.push(InstanceRaw::from_transform(model));
+    }
+
+    instances
+}
+
 impl GltfScene {
-    #[allow(clippy::too_many_arguments)]
-    pub fn load<P: AsRef<Path>>(
-        path: P,
+    fn load_prototype_asset(
+        path: &Path,
+        materials: &mut Vec<Material>,
+        primitives_by_mesh: &mut Vec<Vec<GpuPrimitive>>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bgl_obj: &wgpu::BindGroupLayout,
         bgl_mat: &wgpu::BindGroupLayout,
         default_view: &wgpu::TextureView,
         default_sampler: &wgpu::Sampler,
         max_texture_size: u32,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
+        let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
+        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_texture_size);
+        let mat_offset = materials.len();
+        let mut new_materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
+        materials.append(&mut new_materials);
+
+        let (mut new_prims, _, _) = Self::build_primitives(&gltf.document, &buffers, mat_offset, materials.len(), device);
+        let proto_mesh_idx = primitives_by_mesh.len();
+        primitives_by_mesh.append(&mut new_prims);
+        Ok(proto_mesh_idx)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_scatter_rules(
+        scatter_config_path: Option<&str>,
+        base_dir: &Path,
+        surfaces: &HashMap<String, SurfaceData>,
+        materials: &mut Vec<Material>,
+        primitives_by_mesh: &mut Vec<Vec<GpuPrimitive>>,
+        render_nodes: &mut Vec<RenderNode>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bgl_mat: &wgpu::BindGroupLayout,
+        default_view: &wgpu::TextureView,
+        default_sampler: &wgpu::Sampler,
+        max_texture_size: u32,
+    ) {
+        let config_path = match scatter_config_path {
+            Some(p) => PathBuf::from(p),
+            None => return,
+        };
+        if !config_path.exists() {
+            crate::telemetry::log_info("GltfLoader", "Scatter", &format!("Scatter config '{}' not found, skipping procedural scattering.", config_path.display()));
+            return;
+        }
+        let data = match std::fs::read_to_string(&config_path) {
+            Ok(d) => d,
+            Err(e) => {
+                crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to read scatter config: {e}"));
+                return;
+            }
+        };
+        let rules: Vec<ScatterRule> = match serde_json::from_str(&data) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to parse scatter config: {e}"));
+                return;
+            }
+        };
+
+        for rule in rules {
+            if !rule.enabled {
+                continue;
+            }
+            let surface = match surfaces.get(&rule.target_surface_node) {
+                Some(s) => s,
+                None => {
+                    crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Target surface '{}' not found in scene for rule '{}'", rule.target_surface_node, rule.name));
+                    continue;
+                }
+            };
+
+            let proto_path = if Path::new(&rule.prototype_asset).is_absolute() {
+                PathBuf::from(&rule.prototype_asset)
+            } else {
+                base_dir.join(&rule.prototype_asset)
+            };
+
+            if !proto_path.exists() {
+                crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
+                continue;
+            }
+
+            match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
+                Ok(proto_mesh_idx) => {
+                    let weights = resolve_surface_weights(surface, rule.weight_channel, &rule.weight_component);
+                    let instances = scatter_instances_on_surface(surface, &weights, &rule);
+                    let instance_buffer = Self::create_buffer(
+                        device,
+                        &format!("{}_Instances", rule.name),
+                        bytemuck::cast_slice(&instances),
+                        wgpu::BufferUsages::VERTEX,
+                    );
+                    crate::telemetry::log_info(
+                        "GltfLoader",
+                        "Scatter",
+                        &format!(
+                            "Applied rule '{}': generated {} GPU instances of '{}' onto '{}'",
+                            rule.name,
+                            instances.len(),
+                            rule.prototype_asset,
+                            rule.target_surface_node
+                        ),
+                    );
+                    render_nodes.push(RenderNode {
+                        name: Some(rule.name),
+                        world_transform: Mat4::IDENTITY,
+                        instance_buffer,
+                        instance_count: instances.len() as u32,
+                        mesh_index: proto_mesh_idx,
+                    });
+                }
+                Err(e) => {
+                    crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to load prototype '{}': {e}", proto_path.display()));
+                }
+            }
+        }
+    }
+}
+// #endregion
+
+// #region Core
+impl GltfScene {
+    #[allow(clippy::too_many_arguments)]
+    pub fn load<P: AsRef<Path>>(
+        path: P, scatter_config: Option<&str>, device: &wgpu::Device, queue: &wgpu::Queue,
+        bgl_mat: &wgpu::BindGroupLayout, default_view: &wgpu::TextureView, default_sampler: &wgpu::Sampler,
+        max_texture_size: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
         let base = path.parent().unwrap_or_else(|| Path::new("."));
-        let start = std::time::Instant::now();
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
-        crate::telemetry::log_info("GltfLoader", "Load", &format!("Reading glTF scene: {} ({:.1} MB imported in {:?})", path.display(), buffers.iter().map(|buffer| buffer.len()).sum::<usize>() as f64 / 1048576.0, start.elapsed()));
+        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_texture_size);
+        crate::telemetry::log_info("GltfLoader", "Load", &format!("Reading glTF scene: {}", path.display()));
 
-        let textures = Self::load_textures(&gltf.document, &buffers, base, max_texture_size);
-        let decoded = start.elapsed();
-        let materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
-        let uploaded = start.elapsed();
+        let mut materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
         drop(textures);
-        let (primitives_by_mesh, mesh_bounds) = Self::build_primitives(&gltf.document, &buffers, materials.len(), device);
-        let built_primitives = start.elapsed();
-        let (render_nodes, cameras, lights, bounds) = Self::build_render_nodes(&gltf.document, device, bgl_obj, &mesh_bounds);
+        let (mut primitives_by_mesh, mesh_bounds, raw_by_mesh) = Self::build_primitives(&gltf.document, &buffers, 0, materials.len(), device);
+        let (mut render_nodes, surfaces, cameras, lights, bounds) = Self::build_render_nodes(&gltf.document, device, &mesh_bounds, &raw_by_mesh);
         let camera = Self::enforce_single_camera_policy(cameras, &bounds);
         let light = Self::resolve_active_light(lights);
-        let built_nodes = start.elapsed();
 
-        crate::telemetry::log_info("GltfLoader", "Init", &format!(
-            "Loaded {} meshes, {} materials, {} instances (decode: {decoded:?}, upload: {:?}, primitives: {:?}, nodes: {:?}, total: {:?}).",
-            primitives_by_mesh.len(), materials.len(), render_nodes.len(),
-            uploaded - decoded, built_primitives - uploaded, built_nodes - built_primitives, start.elapsed()
-        ));
+        Self::apply_scatter_rules(
+            scatter_config, base, &surfaces, &mut materials, &mut primitives_by_mesh,
+            &mut render_nodes, device, queue, bgl_mat, default_view, default_sampler, max_texture_size,
+        );
+
+        crate::telemetry::log_info("GltfLoader", "Init", &format!("Loaded {} meshes, {} materials, {} instances.", primitives_by_mesh.len(), materials.len(), render_nodes.len()));
         Ok(Self { primitives_by_mesh, materials, render_nodes, camera, light })
     }
 }
