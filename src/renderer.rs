@@ -29,6 +29,8 @@ pub struct Renderer {
     pub bgl_mat: Arc<wgpu::BindGroupLayout>,
     pub default_view: Arc<wgpu::TextureView>,
     pub default_sampler: Arc<wgpu::Sampler>,
+    pub env_view: Arc<wgpu::TextureView>,
+    pub env_sampler: Arc<wgpu::Sampler>,
     pub frame_buffer: wgpu::Buffer,
     pub frame_bind_group: wgpu::BindGroup,
     pub pipeline_opaque: wgpu::RenderPipeline,
@@ -104,16 +106,34 @@ impl Renderer {
     ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
         let bgl_frame = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Frame BindGroupLayout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let bgl_obj = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -165,9 +185,101 @@ impl Renderer {
         (bgl_frame, bgl_obj, bgl_mat)
     }
 
+    fn load_environment_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: &str,
+    ) -> (wgpu::TextureView, wgpu::Sampler) {
+        let loaded = std::fs::read(path).ok().and_then(|bytes| {
+            image::load_from_memory(&bytes).ok().map(|img| img.to_rgba8())
+        });
+
+        let (width, height, rgba) = match loaded {
+            Some(img) => {
+                let (w, h) = img.dimensions();
+                crate::telemetry::log_info("Renderer", "IBL", &format!("Loaded environment map '{path}' ({w}x{h})"));
+                (w, h, img.into_raw())
+            }
+            None => {
+                crate::telemetry::log_warn("Renderer", "IBL", &format!("Could not load environment map at '{path}', using neutral sky fallback"));
+                (2, 2, vec![
+                    180, 200, 230, 255,  180, 200, 230, 255,
+                    120, 110, 100, 255,  120, 110, 100, 255,
+                ])
+            }
+        };
+
+        let mip_level_count = 32 - width.max(height).leading_zeros();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Environment Map Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let mut level = image::RgbaImage::from_raw(width, height, rgba)
+            .expect("valid RGBA texture buffer");
+
+        for mip_level in 0..mip_level_count {
+            let (w, h) = level.dimensions();
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                level.as_raw(),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * w),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            if mip_level + 1 < mip_level_count {
+                level = image::imageops::resize(
+                    &level,
+                    (w / 2).max(1),
+                    (h / 2).max(1),
+                    image::imageops::FilterType::Triangle,
+                );
+            }
+        }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Environment Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        (view, sampler)
+    }
+
     fn create_frame_uniforms(
         device: &wgpu::Device,
         bgl_frame: &wgpu::BindGroupLayout,
+        env_view: &wgpu::TextureView,
+        env_sampler: &wgpu::Sampler,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Frame Uniform Buffer"),
@@ -179,10 +291,20 @@ impl Renderer {
         let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Frame BindGroup"),
             layout: bgl_frame,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(env_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(env_sampler),
+                },
+            ],
         });
 
         (frame_buffer, frame_bind_group)
@@ -459,14 +581,20 @@ fn draw_primitive(
 // #region Core
 impl Renderer {
     pub fn new(
-        device: wgpu::Device, queue: wgpu::Queue, surface_format: wgpu::TextureFormat,
-        width: u32, height: u32, shader_source: &str,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        shader_source: &str,
+        env_map_path: &str,
     ) -> Self {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
         let (default_view, default_sampler) = Self::create_default_texture(&device, &queue);
+        let (env_view, env_sampler) = Self::load_environment_texture(&device, &queue, env_map_path);
         let (bgl_frame, bgl_obj, bgl_mat) = Self::create_bind_group_layouts(&device);
-        let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame);
+        let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame, &env_view, &env_sampler);
         let (
             pipeline_opaque,
             pipeline_opaque_double_sided,
@@ -485,6 +613,8 @@ impl Renderer {
             bgl_mat: Arc::new(bgl_mat),
             default_view: Arc::new(default_view),
             default_sampler: Arc::new(default_sampler),
+            env_view: Arc::new(env_view),
+            env_sampler: Arc::new(env_sampler),
             frame_buffer,
             frame_bind_group,
             pipeline_opaque,

@@ -19,7 +19,7 @@ This skill defines the contract and execution protocols for synchronizing 3D sce
 |                - Principled BSDF PBR Sockets + Baked Image Textures             |
 +---------------------------------------------------------------------------------+
                                        |
-                   (Automated glTF 2.0 Export via Python CLI / MCP)
+                   (Automated glTF 2.0 Export via Blender MCP)
                                        v
 +---------------------------------------------------------------------------------+
 |                              DECLARATIVE DATA SCHEMA                            |
@@ -74,17 +74,22 @@ This skill defines the contract and execution protocols for synchronizing 3D sce
 
 ## 5. Standard Export & Synchronization Procedure
 
-### Step 1: Export glTF from Blender
-```bash
-"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe" -b "Model/asset.blend" --python-expr "
+### Step 1: Export glTF from Blender via Blender MCP (`execute_blender_code`)
+```python
 import bpy
+
 bpy.ops.object.select_all(action='DESELECT')
 for name in ['Revuelto.Body', 'ENV_Road_Asphalt_ClosedLoop', 'ENV_Terrain_Forest_Floor_Layered', 'ENV_Sky_Column']:
     o = bpy.data.objects.get(name)
-    if o: o.select_set(True)
+    if o:
+        o.select_set(True)
+
 coll = bpy.data.collections.get('Lamborghini_Revuelto')
 if coll:
-    for o in coll.all_objects: o.select_set(True)
+    for o in coll.all_objects:
+        o.select_set(True)
+
+bpy.ops.wm.save_mainfile()
 bpy.ops.export_scene.gltf(
     filepath='gltf/base_scene.glb',
     use_selection=True,
@@ -93,7 +98,6 @@ bpy.ops.export_scene.gltf(
     export_materials='EXPORT',
     export_image_format='AUTO'
 )
-"
 ```
 
 ### Step 2: Push to Device & Verify

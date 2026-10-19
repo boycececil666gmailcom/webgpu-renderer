@@ -24,10 +24,20 @@ struct MaterialUniforms {
 };
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var env_map: texture_2d<f32>;
+@group(0) @binding(2) var env_sampler: sampler;
+
 @group(1) @binding(0) var<uniform> obj: ObjectUniforms;
 @group(2) @binding(0) var<uniform> mat: MaterialUniforms;
 @group(2) @binding(1) var mat_texture: texture_2d<f32>;
 @group(2) @binding(2) var mat_sampler: sampler;
+
+fn sample_equirect(dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    let pi = 3.14159265;
+    let u = atan2(dir.x, dir.z) / (2.0 * pi) + 0.5;
+    let v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / pi;
+    return textureSampleLevel(env_map, env_sampler, vec2<f32>(u, v), lod).rgb;
+}
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -118,8 +128,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         direct_light = direct_light * (1.0 - cc_fresnel * mat.clearcoat) + vec3<f32>(cc_spec * n_dot_l * mat.clearcoat) * radiance;
     }
 
-    let ambient = vec3<f32>(0.04) * base_color.rgb;
-    let final_color = ambient + direct_light;
+    // --- Image-Based Lighting (IBL) ---
+    // Diffuse IBL: hemispherical irradiance filtered at top mip levels
+    let diffuse_irradiance = sample_equirect(norm, 8.5);
+    let kd_env = (vec3<f32>(1.0) - f0) * (1.0 - mat.metallic);
+    let diffuse_ibl = kd_env * diffuse_irradiance * base_color.rgb;
+
+    // Specular IBL: prefiltered environment radiance filtered by roughness
+    let reflect_dir = reflect(-view_dir, norm);
+    let spec_lod = rough * 8.0;
+    let prefiltered_spec = sample_equirect(reflect_dir, spec_lod);
+    let f_env = f0 + (max(vec3<f32>(1.0 - rough), f0) - f0) * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
+    let specular_ibl = f_env * prefiltered_spec;
+
+    var total_ibl = diffuse_ibl + specular_ibl;
+
+    // Clearcoat IBL: sharp specular reflection on top of base coat
+    if (mat.clearcoat > 0.0) {
+        let cc_fresnel_env = 0.04 + 0.96 * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
+        let cc_spec_env = sample_equirect(reflect_dir, 0.5);
+        let cc_ibl = cc_spec_env * (cc_fresnel_env * mat.clearcoat);
+        total_ibl = total_ibl * (1.0 - cc_fresnel_env * mat.clearcoat) + cc_ibl;
+    }
+
+    let final_color = total_ibl + direct_light;
 
     return vec4<f32>(final_color, base_color.a);
 }

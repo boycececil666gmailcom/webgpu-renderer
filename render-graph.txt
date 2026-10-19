@@ -40,37 +40,60 @@
      |-- 7.1 2D UI / HUD / デバッグギズモ描画パス
      +-- 7.2 最終バックバッファ転送 (Present / Blit to Swapchain)
 
+-------------------------------------------------------------------------------------
+
++-----------------------------------------------------------------------------------+
+|       統合 PBR シェーダー内部ライティング構造 (Direct Light + Indirect IBL)       |
++-----------------------------------------------------------------------------------+
+
+[光の入力源 (Lighting Inputs)]
+      │
+      ├──► 【1. 直接光 (Direct Light: 太陽 1灯)】
+      │      太陽光ベクトル L / 放射輝度 Radiance
+      │      │
+      │      ├── [下地 拡散反射 (Base Diffuse BRDF)]
+      │      │    kd * (base_color / PI) * (N・L) * Radiance
+      │      │    (素材固有の色・直射光の陰影)
+      │      │
+      │      └── [下地 鏡面反射 (Base Specular BRDF)]
+      │           (D * G * F) / (4 * N・V * N・L) * (N・L) * Radiance
+      │           (Cook-Torrance マイクロファセット / 粗さに応じた直射光ハイライト)
+      │
+      │
+      └──► 【2. 環境光 (Indirect Light: IBL)】
+             全方位周囲からの間接照光 (autumn_forest_01_1k パノラマ)
+             │
+             ├── [下地 拡散IBL (Base Diffuse Irradiance)]
+             │    kd_env * base_color * SampleEnv(norm, 8.5)
+             │    (全天周囲光による半球ライティング・暗部の自然な底上げ)
+             │
+             └── [下地 鏡面IBL (Base Specular Reflection)]
+                  F_env * SampleEnv(reflect_dir, rough * 8.0)
+                  (マテリアルの粗さに応じたMIPレベルでの背景映り込み・光沢)
 
 
-     ---------------------------------
-
-
-
-
-     +---------------------------------------------------------------------------------------------+
-|               フォワード PBR シェーダー内部の光の加算レイヤー構造 (WGSL)                    |
-+---------------------------------------------------------------------------------------------+
-
-                               [入射光: 太陽ベクトル L]
-                                          │
-       ┌──────────────────────────────────┼──────────────────────────────────┐
-       │                                  │                                  │
-       ▼                                  ▼                                  ▼
- [Layer 1: アンビエント]       [Layer 2: 拡散反射 (Diffuse)]       [Layer 3: 鏡面反射 (Specular)]
-  ambient = 0.04 * base_color   kd * base_color / PI               (D * G * F) / (4 * N·V * N·L)
-  (影部の最低限の明るさ底上げ)    (素材そのものの色・陰影)           (太陽光の鋭いハイライト・ツヤ)
-       │                                  │                                  │
-       │                                  └────────────────┬─────────────────┘
-       │                                                   │
-       │                                                   ▼
-       │                                          [直接光 (Direct Light)]
-       │                                                   │
-       │                                                   ▼
-       │                                       [Layer 4: クリアコート層]
-       │                                       クリア層による下層減衰 + ウレタン反射加算
-       │                                                   │
-       └───────────────────────────────────┬───────────────┘
-                                           │ (加算合成: +)
-                                           ▼
-                                 [最終出力ピクセル色: final_color]
-                                 (shaders/standard_pbr.wgsl L122)
+[マテリアル複層合成 & クリアコート層 (Layer Integration)]
+      │
+      ├── [下地ベース層の統合 (Base Substrate Lighting)]
+      │    L_base_direct = 拡散反射 + 鏡面反射
+      │    L_base_ibl    = 拡散IBL + 鏡面IBL
+      │    (金属度 metallic と粗さ roughness によりエネルギー保存配分)
+      │
+      │
+      └── [最外層クリアコート (Layer: Clearcoat - 直接光と環境光の双方に作用)]
+           (※ mat.clearcoat > 0.0 の場合に最表面被膜として適用)
+           │
+           ├── 1. 下地光全体の透過減衰 (Transmission Attenuation):
+           │      下地へ透過する光が表面反射分だけ一様に減衰
+           │      ・直接光の減衰: L_base_direct * (1.0 - cc_fresnel * clearcoat)
+           │      ・環境光の減衰: L_base_ibl    * (1.0 - cc_fresnel_env * clearcoat)
+           │
+           ├── 2. 直接光クリアコート加算 (Direct Clearcoat Highlight):
+           │      + cc_spec * (N・L) * Radiance * clearcoat (太陽の鋭い極小ハイライト)
+           │
+           └── 3. 環境光クリアコート加算 (IBL Clearcoat Reflection):
+                  + cc_spec_env * (cc_fresnel_env * clearcoat) (LOD 0.5 の鮮明な森・空の鏡像)
+           │
+           ▼
+[最終出力ピクセル色: final_color = direct_light + total_ibl]
+(shaders/standard_pbr.wgsl L141)

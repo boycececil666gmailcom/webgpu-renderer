@@ -198,6 +198,7 @@ fn init_render_state(
         width,
         height,
         include_str!("../shaders/standard_pbr.wgsl"),
+        &config.default_env_map,
     );
 
     let scene_rx = spawn_scene_load(&renderer, config.default_model.clone(), config.max_texture_size)?;

@@ -126,6 +126,21 @@ deploy_app() {
             echo "[CI-Deploy] 3D asset is already synced."
         fi
     fi
+
+    local env_tex="$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
+    if [ -f "$env_tex" ]; then
+        local env_name; env_name=$(basename "$env_tex")
+        local env_size; env_size=$(wc -c < "$env_tex" | tr -d ' ')
+        local env_remote; env_remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "ls -l /sdcard/Android/data/$PACKAGE/files/$env_name 2>/dev/null" | tr -d '\r')
+        if [[ "$env_remote" != *"$env_size"* ]]; then
+            local win_env; win_env=$(cygpath -w "$env_tex" 2>/dev/null || echo "$env_tex")
+            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell mkdir -p "/sdcard/Android/data/$PACKAGE/files" >/dev/null 2>&1 || true
+            MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" push "$win_env" "/sdcard/Android/data/$PACKAGE/files/$env_name" >/dev/null
+            echo "[CI-Deploy] Environment map synced to device."
+        else
+            echo "[CI-Deploy] Environment map is already synced."
+        fi
+    fi
 }
 
 stream_telemetry() {

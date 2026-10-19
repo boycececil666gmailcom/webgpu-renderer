@@ -248,6 +248,7 @@ impl GltfScene {
         let mut texture_views: HashMap<usize, wgpu::TextureView> = HashMap::new();
         let mut materials = Vec::new();
 
+        let root = doc.as_json();
         for mat in doc.materials() {
             let pbr = mat.pbr_metallic_roughness();
             let base_color = pbr.base_color_factor();
@@ -259,6 +260,15 @@ impl GltfScene {
                 gltf::material::AlphaMode::Blend => 2u32,
             };
             let is_transparent = mat.alpha_mode() == gltf::material::AlphaMode::Blend;
+            let clearcoat = mat
+                .index()
+                .and_then(|idx| root.materials.get(idx))
+                .and_then(|m| m.extensions.as_ref())
+                .and_then(|ext| ext.others.get("KHR_materials_clearcoat"))
+                .and_then(|val| val.get("clearcoatFactor"))
+                .and_then(|cf| cf.as_f64())
+                .map(|f| f as f32)
+                .unwrap_or(0.0);
             let texture_index = pbr
                 .base_color_texture()
                 .map(|info| info.texture().source().index());
@@ -280,7 +290,7 @@ impl GltfScene {
                 base_color,
                 pbr.metallic_factor(),
                 pbr.roughness_factor(),
-                0.0,
+                clearcoat,
                 alpha_cutoff,
                 alpha_mode,
                 is_unlit,

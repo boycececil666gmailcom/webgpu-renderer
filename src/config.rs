@@ -7,6 +7,7 @@
 pub struct Config {
     pub target_fps: u32,
     pub default_model: String,
+    pub default_env_map: String,
     pub max_texture_size: u32,
 }
 // #endregion
@@ -17,6 +18,7 @@ impl Config {
         Self {
             target_fps: 60,
             default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
+            default_env_map: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/autumn_forest_01_1k.png".to_string(),
             max_texture_size: 2048,
         }
     }
