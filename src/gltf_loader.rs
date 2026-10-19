@@ -69,11 +69,23 @@ fn default_channel() -> u32 { 1 }
 fn default_component() -> String { "R".to_string() }
 
 #[derive(Clone, Debug, serde::Deserialize)]
+pub struct ScatterLodConfig {
+    #[serde(default)]
+    pub lod_level: u32,
+    pub prototype_asset: String,
+    #[serde(default)]
+    pub min_screen_coverage_percent: f32,
+}
+
+fn default_radius() -> f32 { 0.09 }
+
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct ScatterRule {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    pub prototype_asset: String,
+    #[serde(default)]
+    pub prototype_asset: Option<String>,
     pub target_surface_node: String,
     #[serde(default = "default_channel")]
     pub weight_channel: u32,
@@ -86,6 +98,33 @@ pub struct ScatterRule {
     pub normal_offset: f32,
     #[serde(default = "default_true")]
     pub yaw_random: bool,
+    #[serde(default = "default_radius")]
+    pub bounding_sphere_radius: f32,
+    #[serde(default)]
+    pub cull_screen_coverage_percent: f32,
+    #[serde(default)]
+    pub lods: Vec<ScatterLodConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScatterInstanceItem {
+    pub transform: InstanceRaw,
+    pub position: Vec3,
+    pub world_radius: f32,
+}
+
+pub struct ScatterLodLevel {
+    pub mesh_index: usize,
+    pub render_node_index: usize,
+    pub min_screen_coverage_percent: f32,
+}
+
+pub struct ScatterLodGroup {
+    pub name: String,
+    pub instances: Vec<ScatterInstanceItem>,
+    pub lods: Vec<ScatterLodLevel>,
+    pub cull_screen_coverage_percent: f32,
+    pub last_eval_cam: Option<(Vec3, f32, f32)>,
 }
 
 pub struct SceneCamera {
@@ -109,6 +148,7 @@ pub struct GltfScene {
     pub render_nodes: Vec<RenderNode>,
     pub camera: SceneCamera,
     pub light: SceneLight,
+    pub scatter_groups: Vec<ScatterLodGroup>,
 }
 
 struct TextureData {
@@ -637,7 +677,7 @@ fn scatter_instances_on_surface(
     surface: &SurfaceData,
     weights: &[f32],
     rule: &ScatterRule,
-) -> Vec<InstanceRaw> {
+) -> Vec<ScatterInstanceItem> {
     let tri_count = surface.indices.len() / 3;
     if tri_count == 0 || surface.positions.is_empty() {
         return Vec::new();
@@ -729,7 +769,12 @@ fn scatter_instances_on_surface(
             offset_pos.extend(1.0),
         );
 
-        instances.push(InstanceRaw::from_transform(model));
+        let world_radius = rule.bounding_sphere_radius * scale;
+        instances.push(ScatterInstanceItem {
+            transform: InstanceRaw::from_transform(model),
+            position: offset_pos,
+            world_radius,
+        });
     }
 
     instances
@@ -769,6 +814,7 @@ impl GltfScene {
         materials: &mut Vec<Material>,
         primitives_by_mesh: &mut Vec<Vec<GpuPrimitive>>,
         render_nodes: &mut Vec<RenderNode>,
+        scatter_groups: &mut Vec<ScatterLodGroup>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bgl_mat: &wgpu::BindGroupLayout,
@@ -811,50 +857,199 @@ impl GltfScene {
                 }
             };
 
-            let proto_path = if Path::new(&rule.prototype_asset).is_absolute() {
-                PathBuf::from(&rule.prototype_asset)
-            } else {
-                base_dir.join(&rule.prototype_asset)
-            };
-
-            if !proto_path.exists() {
-                crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
+            let weights = resolve_surface_weights(surface, rule.weight_channel, &rule.weight_component);
+            let instances = scatter_instances_on_surface(surface, &weights, &rule);
+            let total_count = instances.len();
+            if total_count == 0 {
                 continue;
             }
 
-            match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
-                Ok(proto_mesh_idx) => {
-                    let weights = resolve_surface_weights(surface, rule.weight_channel, &rule.weight_component);
-                    let instances = scatter_instances_on_surface(surface, &weights, &rule);
-                    let instance_buffer = Self::create_buffer(
-                        device,
-                        &format!("{}_Instances", rule.name),
-                        bytemuck::cast_slice(&instances),
-                        wgpu::BufferUsages::VERTEX,
-                    );
-                    crate::telemetry::log_info(
-                        "GltfLoader",
-                        "Scatter",
-                        &format!(
-                            "Applied rule '{}': generated {} GPU instances of '{}' onto '{}'",
-                            rule.name,
-                            instances.len(),
-                            rule.prototype_asset,
-                            rule.target_surface_node
-                        ),
-                    );
-                    render_nodes.push(RenderNode {
-                        name: Some(rule.name),
-                        world_transform: Mat4::IDENTITY,
-                        instance_buffer,
-                        instance_count: instances.len() as u32,
-                        mesh_index: proto_mesh_idx,
-                    });
+            if !rule.lods.is_empty() {
+                let mut lod_levels = Vec::new();
+                for lod_cfg in &rule.lods {
+                    let proto_path = if Path::new(&lod_cfg.prototype_asset).is_absolute() {
+                        PathBuf::from(&lod_cfg.prototype_asset)
+                    } else {
+                        base_dir.join(&lod_cfg.prototype_asset)
+                    };
+                    if !proto_path.exists() {
+                        crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("LOD prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
+                        continue;
+                    }
+
+                    match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
+                        Ok(proto_mesh_idx) => {
+                            let max_byte_size = (total_count * std::mem::size_of::<InstanceRaw>()) as u64;
+                            let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some(&format!("{}_LOD{}_Instances", rule.name, lod_cfg.lod_level)),
+                                size: max_byte_size.max(64),
+                                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            });
+                            let node_idx = render_nodes.len();
+                            render_nodes.push(RenderNode {
+                                name: Some(format!("{}_LOD{}", rule.name, lod_cfg.lod_level)),
+                                world_transform: Mat4::IDENTITY,
+                                instance_buffer,
+                                instance_count: 0,
+                                mesh_index: proto_mesh_idx,
+                            });
+                            lod_levels.push(ScatterLodLevel {
+                                mesh_index: proto_mesh_idx,
+                                render_node_index: node_idx,
+                                min_screen_coverage_percent: lod_cfg.min_screen_coverage_percent,
+                            });
+                        }
+                        Err(e) => {
+                            crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to load LOD prototype '{}': {e}", proto_path.display()));
+                        }
+                    }
                 }
-                Err(e) => {
-                    crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to load prototype '{}': {e}", proto_path.display()));
+
+                lod_levels.sort_by(|a, b| b.min_screen_coverage_percent.total_cmp(&a.min_screen_coverage_percent));
+                crate::telemetry::log_info(
+                    "GltfLoader",
+                    "Scatter",
+                    &format!(
+                        "Configured rule '{}': generated {} candidate instances across {} LOD levels onto '{}'",
+                        rule.name, total_count, lod_levels.len(), rule.target_surface_node
+                    ),
+                );
+
+                scatter_groups.push(ScatterLodGroup {
+                    name: rule.name.clone(),
+                    instances,
+                    lods: lod_levels,
+                    cull_screen_coverage_percent: rule.cull_screen_coverage_percent,
+                    last_eval_cam: None,
+                });
+            } else if let Some(ref proto) = rule.prototype_asset {
+                let proto_path = if Path::new(proto).is_absolute() {
+                    PathBuf::from(proto)
+                } else {
+                    base_dir.join(proto)
+                };
+                if !proto_path.exists() {
+                    crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
+                    continue;
+                }
+
+                match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
+                    Ok(proto_mesh_idx) => {
+                        let raw_transforms: Vec<InstanceRaw> = instances.iter().map(|it| it.transform).collect();
+                        let instance_buffer = Self::create_buffer(
+                            device,
+                            &format!("{}_Instances", rule.name),
+                            bytemuck::cast_slice(&raw_transforms),
+                            wgpu::BufferUsages::VERTEX,
+                        );
+                        crate::telemetry::log_info(
+                            "GltfLoader",
+                            "Scatter",
+                            &format!(
+                                "Applied rule '{}': generated {} GPU instances of '{}' onto '{}'",
+                                rule.name, raw_transforms.len(), proto, rule.target_surface_node
+                            ),
+                        );
+                        render_nodes.push(RenderNode {
+                            name: Some(rule.name),
+                            world_transform: Mat4::IDENTITY,
+                            instance_buffer,
+                            instance_count: raw_transforms.len() as u32,
+                            mesh_index: proto_mesh_idx,
+                        });
+                    }
+                    Err(e) => {
+                        crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Failed to load prototype '{}': {e}", proto_path.display()));
+                    }
+                }
+            } else {
+                crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Rule '{}' has neither 'lods' nor 'prototype_asset' specified.", rule.name));
+            }
+        }
+    }
+
+    pub fn update_lods(&mut self, queue: &wgpu::Queue, cam_pos: Vec3, aspect: f32, yfov: f32) {
+        if self.scatter_groups.is_empty() {
+            return;
+        }
+
+        let tan_half_fov = (yfov * 0.5).tan();
+        let denom_factor = 4.0 * aspect * tan_half_fov * tan_half_fov;
+        if denom_factor <= 1e-6 {
+            return;
+        }
+
+        for group in &mut self.scatter_groups {
+            if let Some((last_pos, last_asp, last_fov)) = group.last_eval_cam {
+                if last_pos.distance_squared(cam_pos) < 1e-4
+                    && (last_asp - aspect).abs() < 1e-4
+                    && (last_fov - yfov).abs() < 1e-4
+                {
+                    continue;
                 }
             }
+            group.last_eval_cam = Some((cam_pos, aspect, yfov));
+
+            let lod_count = group.lods.len();
+            let mut buckets: Vec<Vec<InstanceRaw>> = vec![Vec::new(); lod_count];
+            let mut culled_count = 0usize;
+
+            for inst in &group.instances {
+                let dist = inst.position.distance(cam_pos);
+                if dist <= 1e-4 {
+                    if let Some(b) = buckets.first_mut() {
+                        b.push(inst.transform);
+                    }
+                    continue;
+                }
+
+                let r = inst.world_radius;
+                let coverage_pct = (std::f32::consts::PI * r * r) / (denom_factor * dist * dist) * 100.0;
+
+                if coverage_pct < group.cull_screen_coverage_percent {
+                    culled_count += 1;
+                    continue;
+                }
+
+                let mut assigned = false;
+                for (lod_idx, lod) in group.lods.iter().enumerate() {
+                    if coverage_pct >= lod.min_screen_coverage_percent {
+                        buckets[lod_idx].push(inst.transform);
+                        assigned = true;
+                        break;
+                    }
+                }
+                if !assigned {
+                    if let Some(b) = buckets.last_mut() {
+                        b.push(inst.transform);
+                    } else {
+                        culled_count += 1;
+                    }
+                }
+            }
+
+            let mut log_stats = Vec::new();
+            for (lod_idx, lod) in group.lods.iter().enumerate() {
+                let bucket = &buckets[lod_idx];
+                let node = &mut self.render_nodes[lod.render_node_index];
+                node.instance_count = bucket.len() as u32;
+                if !bucket.is_empty() {
+                    queue.write_buffer(&node.instance_buffer, 0, bytemuck::cast_slice(bucket));
+                }
+                log_stats.push(format!("LOD{}: {}", lod_idx, bucket.len()));
+            }
+
+            crate::telemetry::log_info(
+                "GltfLoader",
+                "LOD",
+                &format!(
+                    "Screen coverage distribution for '{}': {} | Culled: {}",
+                    group.name,
+                    log_stats.join(", "),
+                    culled_count
+                ),
+            );
         }
     }
 }
@@ -864,31 +1059,23 @@ impl GltfScene {
 impl GltfScene {
     #[allow(clippy::too_many_arguments)]
     pub fn load<P: AsRef<Path>>(
-        path: P, scatter_config: Option<&str>, device: &wgpu::Device, queue: &wgpu::Queue,
-        bgl_mat: &wgpu::BindGroupLayout, default_view: &wgpu::TextureView, default_sampler: &wgpu::Sampler,
-        max_texture_size: u32,
+        path: P, scatter_cfg: Option<&str>, device: &wgpu::Device, queue: &wgpu::Queue,
+        bgl_mat: &wgpu::BindGroupLayout, view: &wgpu::TextureView, sampler: &wgpu::Sampler, max_tex: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = path.as_ref();
-        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        let (path, base) = (path.as_ref(), path.as_ref().parent().unwrap_or_else(|| Path::new(".")));
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
-        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_texture_size);
+        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_tex);
         crate::telemetry::log_info("GltfLoader", "Load", &format!("Reading glTF scene: {}", path.display()));
-
-        let mut materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
+        let mut materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, view, sampler);
         drop(textures);
-        let (mut primitives_by_mesh, mesh_bounds, raw_by_mesh) = Self::build_primitives(&gltf.document, &buffers, 0, materials.len(), device);
-        let (mut render_nodes, surfaces, cameras, lights, bounds) = Self::build_render_nodes(&gltf.document, device, &mesh_bounds, &raw_by_mesh);
-        let camera = Self::enforce_single_camera_policy(cameras, &bounds);
-        let light = Self::resolve_active_light(lights);
-
-        Self::apply_scatter_rules(
-            scatter_config, base, &surfaces, &mut materials, &mut primitives_by_mesh,
-            &mut render_nodes, device, queue, bgl_mat, default_view, default_sampler, max_texture_size,
-        );
-
+        let (mut primitives_by_mesh, bounds, raw) = Self::build_primitives(&gltf.document, &buffers, 0, materials.len(), device);
+        let (mut render_nodes, surfaces, cameras, lights, aabb) = Self::build_render_nodes(&gltf.document, device, &bounds, &raw);
+        let (camera, light) = (Self::enforce_single_camera_policy(cameras, &aabb), Self::resolve_active_light(lights));
+        let mut scatter_groups = Vec::new();
+        Self::apply_scatter_rules(scatter_cfg, base, &surfaces, &mut materials, &mut primitives_by_mesh, &mut render_nodes, &mut scatter_groups, device, queue, bgl_mat, view, sampler, max_tex);
         crate::telemetry::log_info("GltfLoader", "Init", &format!("Loaded {} meshes, {} materials, {} instances.", primitives_by_mesh.len(), materials.len(), render_nodes.len()));
-        Ok(Self { primitives_by_mesh, materials, render_nodes, camera, light })
+        Ok(Self { primitives_by_mesh, materials, render_nodes, camera, light, scatter_groups })
     }
 }
 // #endregion

@@ -253,7 +253,8 @@ fn handle_window_event(
                         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
                         let aspect = surface_config.width as f32 / surface_config.height.max(1) as f32;
 
-                        if let Some(scene) = scene.as_ref() {
+                        if let Some(scene) = scene.as_mut() {
+                            scene.update_lods(&renderer.queue, scene.camera.position(), aspect, scene.camera.yfov);
                             renderer.render_frame(
                                 &view,
                                 scene.camera.view_matrix(),

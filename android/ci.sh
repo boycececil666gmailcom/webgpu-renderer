@@ -137,6 +137,9 @@ deploy_app() {
 
     sync_file "$PROJECT_ROOT/gltf/base_scene.glb"
     sync_file "$PROJECT_ROOT/gltf/leaves.glb"
+    sync_file "$PROJECT_ROOT/gltf/leaves_lod0.glb"
+    sync_file "$PROJECT_ROOT/gltf/leaves_lod1.glb"
+    sync_file "$PROJECT_ROOT/gltf/leaves_lod2.glb"
     sync_file "$PROJECT_ROOT/config/scatter.json"
     sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
 }

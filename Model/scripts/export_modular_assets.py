@@ -25,25 +25,57 @@ def export_modular_assets() -> None:
     base_scene_glb = os.path.join(gltf_dir, "base_scene.glb")
     leaves_glb = os.path.join(gltf_dir, "leaves.glb")
 
-    # 1. Export standalone leaves prototype
-    log_step("Exporting standalone leaves prototype: gltf/leaves.glb...")
-    bpy.ops.object.select_all(action='DESELECT')
+    # 1. Export standalone leaves prototypes (LOD 0, LOD 1, LOD 2)
+    log_step("Exporting standalone leaves prototypes (LOD 0, 1, 2)...")
     leaf_obj = bpy.data.objects.get("ENV_Foliage_Leaves_Scatter")
-    if leaf_obj:
-        leaf_obj.select_set(True)
+    if not leaf_obj:
+        raise ValueError("ENV_Foliage_Leaves_Scatter object not found in asset.blend")
+
+    def export_single_mesh(obj, out_path):
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
         bpy.ops.export_scene.gltf(
-            filepath=leaves_glb,
+            filepath=out_path,
             use_selection=True,
             export_format='GLB',
-            export_apply=False,
+            export_apply=True,
             export_materials='EXPORT',
             export_image_format='AUTO',
             export_cameras=False,
             export_lights=False,
         )
-        log_step(f"Exported leaves prototype: {leaves_glb}")
-    else:
-        raise ValueError("ENV_Foliage_Leaves_Scatter object not found in asset.blend")
+        log_step(f"Exported: {out_path} ({os.path.getsize(out_path)} bytes)")
+
+    lod0_path = os.path.join(gltf_dir, "leaves_lod0.glb")
+    export_single_mesh(leaf_obj, lod0_path)
+    export_single_mesh(leaf_obj, leaves_glb)
+
+    # LOD 1 (0.25 decimation)
+    lod1_obj = leaf_obj.copy()
+    lod1_obj.data = leaf_obj.data.copy()
+    lod1_obj.name = "ENV_Foliage_Leaves_Scatter_LOD1"
+    bpy.context.collection.objects.link(lod1_obj)
+    mod1 = lod1_obj.modifiers.new("Decimate", "DECIMATE")
+    mod1.ratio = 0.25
+    bpy.context.view_layer.objects.active = lod1_obj
+    bpy.ops.object.modifier_apply(modifier="Decimate")
+    lod1_path = os.path.join(gltf_dir, "leaves_lod1.glb")
+    export_single_mesh(lod1_obj, lod1_path)
+    bpy.data.objects.remove(lod1_obj, do_unlink=True)
+
+    # LOD 2 (0.06 decimation)
+    lod2_obj = leaf_obj.copy()
+    lod2_obj.data = leaf_obj.data.copy()
+    lod2_obj.name = "ENV_Foliage_Leaves_Scatter_LOD2"
+    bpy.context.collection.objects.link(lod2_obj)
+    mod2 = lod2_obj.modifiers.new("Decimate", "DECIMATE")
+    mod2.ratio = 0.06
+    bpy.context.view_layer.objects.active = lod2_obj
+    bpy.ops.object.modifier_apply(modifier="Decimate")
+    lod2_path = os.path.join(gltf_dir, "leaves_lod2.glb")
+    export_single_mesh(lod2_obj, lod2_path)
+    bpy.data.objects.remove(lod2_obj, do_unlink=True)
 
     # 2. Preserve vehicle hierarchy and transforms from Blender
     log_step("Verifying vehicle hierarchy from Blender...")

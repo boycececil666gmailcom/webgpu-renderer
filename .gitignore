@@ -12,7 +12,7 @@ android/logs/
 *.blend1
 *.blend2
 *.blend3
-*.blend.bak
+*.blend.bak*
 __pycache__/
 *.pyc
 
