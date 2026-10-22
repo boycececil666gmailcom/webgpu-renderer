@@ -140,6 +140,12 @@ deploy_app() {
     sync_file "$PROJECT_ROOT/gltf/leaves_lod0.glb"
     sync_file "$PROJECT_ROOT/gltf/leaves_lod1.glb"
     sync_file "$PROJECT_ROOT/gltf/leaves_lod2.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod0.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod1.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod2.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod0.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod1.glb"
+    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod2.glb"
     sync_file "$PROJECT_ROOT/config/scatter.json"
     sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
 }
@@ -155,7 +161,7 @@ stream_telemetry() {
 
     # Capture initial screenshot in background after the async scene load settles
     (
-        sleep 16
+        sleep 25
         "$ADB" -s "$TARGET_SERIAL" exec-out screencap -p > "$LOG_DIR/screenshot_latest.png" 2>/dev/null || true
         echo "[CI-Stream] Framebuffer captured: logs/screenshot_latest.png"
     ) &

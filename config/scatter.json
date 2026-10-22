@@ -1,34 +1,62 @@
 [
   {
-    "name": "road_ground_leaves",
+    "name": "maple_tree_line",
     "enabled": true,
-    "target_surface_node": "ENV_Road_Asphalt_ClosedLoop",
+    "target_surface_node": "ENV_Tree_Scatter_Surface",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 3500,
-    "seed": 42,
-    "scale_min": 1.3,
-    "scale_max": 2.2,
-    "normal_offset": 0.0025,
-    "yaw_random": true,
-    "bounding_sphere_radius": 0.09,
-    "cull_screen_coverage_percent": 0.005,
+    "count": 180,
+    "seed": 421,
+    "bounding_sphere_radius": 1.9,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "position": {
+        "x": [0.0, 0.0],
+        "y": [0.0, 0.03],
+        "z": [0.0, 0.0]
+      },
+      "rotation": {
+        "x": [0.0, 0.0],
+        "y": [-180.0, 180.0],
+        "z": [-180.0, 180.0]
+      },
+      "scale": [1.0, 1.25],
+      "upright": true
+    },
     "lods": [
-      {
-        "lod_level": 0,
-        "prototype_asset": "leaves_lod0.glb",
-        "min_screen_coverage_percent": 0.12
+      {"lod_level": 0, "prototype_asset": "tree_maple_lod0.glb", "min_screen_coverage_percent": 0.15},
+      {"lod_level": 1, "prototype_asset": "tree_maple_lod1.glb", "min_screen_coverage_percent": 0.03},
+      {"lod_level": 2, "prototype_asset": "tree_maple_lod2.glb", "min_screen_coverage_percent": 0.001}
+    ]
+  },
+  {
+    "name": "aspen_tree_line",
+    "enabled": true,
+    "target_surface_node": "ENV_Tree_Scatter_Surface",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 140,
+    "seed": 739,
+    "bounding_sphere_radius": 3.8,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "position": {
+        "x": [0.0, 0.0],
+        "y": [0.0, 0.03],
+        "z": [0.0, 0.0]
       },
-      {
-        "lod_level": 1,
-        "prototype_asset": "leaves_lod1.glb",
-        "min_screen_coverage_percent": 0.025
+      "rotation": {
+        "x": [0.0, 0.0],
+        "y": [-180.0, 180.0],
+        "z": [-180.0, 180.0]
       },
-      {
-        "lod_level": 2,
-        "prototype_asset": "leaves_lod2.glb",
-        "min_screen_coverage_percent": 0.005
-      }
+      "scale": [0.9, 1.2],
+      "upright": true
+    },
+    "lods": [
+      {"lod_level": 0, "prototype_asset": "tree_aspen_lod0.glb", "min_screen_coverage_percent": 0.15},
+      {"lod_level": 1, "prototype_asset": "tree_aspen_lod1.glb", "min_screen_coverage_percent": 0.03},
+      {"lod_level": 2, "prototype_asset": "tree_aspen_lod2.glb", "min_screen_coverage_percent": 0.001}
     ]
   }
 ]

@@ -1,7 +1,7 @@
 // #region Imports
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
@@ -79,6 +79,145 @@ pub struct ScatterLodConfig {
 
 fn default_radius() -> f32 { 0.09 }
 
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum RangeVal {
+    Single(f32),
+    Range([f32; 2]),
+}
+
+impl RangeVal {
+    pub fn sample(&self, t: f32) -> f32 {
+        match *self {
+            RangeVal::Single(v) => v,
+            RangeVal::Range([min, max]) => min + t * (max - min).max(0.0),
+        }
+    }
+}
+
+impl Default for RangeVal {
+    fn default() -> Self {
+        RangeVal::Single(1.0)
+    }
+}
+
+fn default_scale_range() -> RangeVal {
+    RangeVal::Range([1.0, 1.0])
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PositionRange {
+    Axes {
+        #[serde(default)]
+        x: [f32; 2],
+        #[serde(default)]
+        y: [f32; 2],
+        #[serde(default)]
+        z: [f32; 2],
+    },
+    MinMax([[f32; 3]; 2]),
+}
+
+impl Default for PositionRange {
+    fn default() -> Self {
+        PositionRange::Axes {
+            x: [0.0, 0.0],
+            y: [0.0, 0.0],
+            z: [0.0, 0.0],
+        }
+    }
+}
+
+impl PositionRange {
+    pub fn sample(&self, rx: f32, ry: f32, rz: f32) -> (f32, f32, f32) {
+        match *self {
+            PositionRange::Axes { x, y, z } => (
+                x[0] + rx * (x[1] - x[0]),
+                y[0] + ry * (y[1] - y[0]),
+                z[0] + rz * (z[1] - z[0]),
+            ),
+            PositionRange::MinMax([min, max]) => (
+                min[0] + rx * (max[0] - min[0]),
+                min[1] + ry * (max[1] - min[1]),
+                min[2] + rz * (max[2] - min[2]),
+            ),
+        }
+    }
+}
+
+fn default_yaw_range() -> [f32; 2] {
+    [-180.0, 180.0]
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum RotationRange {
+    Axes {
+        #[serde(default)]
+        x: [f32; 2],
+        #[serde(default = "default_yaw_range")]
+        y: [f32; 2],
+        #[serde(default)]
+        z: [f32; 2],
+    },
+    MinMax([[f32; 3]; 2]),
+}
+
+impl Default for RotationRange {
+    fn default() -> Self {
+        RotationRange::Axes {
+            x: [0.0, 0.0],
+            y: [-180.0, 180.0],
+            z: [0.0, 0.0],
+        }
+    }
+}
+
+impl RotationRange {
+    pub fn sample_euler_rad(&self, rx: f32, ry: f32, rz: f32) -> (f32, f32, f32) {
+        let (deg_x, deg_y, deg_z) = match *self {
+            RotationRange::Axes { x, y, z } => (
+                x[0] + rx * (x[1] - x[0]),
+                y[0] + ry * (y[1] - y[0]),
+                z[0] + rz * (z[1] - z[0]),
+            ),
+            RotationRange::MinMax([min, max]) => (
+                min[0] + rx * (max[0] - min[0]),
+                min[1] + ry * (max[1] - min[1]),
+                min[2] + rz * (max[2] - min[2]),
+            ),
+        };
+        (deg_x.to_radians(), deg_y.to_radians(), deg_z.to_radians())
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct TransformConfig {
+    #[serde(default)]
+    pub position: PositionRange,
+    #[serde(default)]
+    pub rotation: RotationRange,
+    #[serde(default = "default_scale_range")]
+    pub scale: RangeVal,
+    #[serde(default)]
+    pub normal_offset: Option<f32>,
+    #[serde(default)]
+    pub upright: bool,
+}
+
+impl Default for TransformConfig {
+    fn default() -> Self {
+        Self {
+            position: PositionRange::default(),
+            rotation: RotationRange::default(),
+            scale: RangeVal::Range([1.0, 1.0]),
+            normal_offset: None,
+            upright: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct ScatterRule {
     pub name: String,
@@ -93,15 +232,12 @@ pub struct ScatterRule {
     pub weight_component: String,
     pub count: usize,
     pub seed: u64,
-    pub scale_min: f32,
-    pub scale_max: f32,
-    pub normal_offset: f32,
-    #[serde(default = "default_true")]
-    pub yaw_random: bool,
     #[serde(default = "default_radius")]
     pub bounding_sphere_radius: f32,
     #[serde(default)]
     pub cull_screen_coverage_percent: f32,
+    #[serde(default)]
+    pub transform: TransformConfig,
     #[serde(default)]
     pub lods: Vec<ScatterLodConfig>,
 }
@@ -715,7 +851,7 @@ fn scatter_instances_on_surface(
     let mut rng = LcgRng::new(rule.seed);
     let mut instances = Vec::with_capacity(rule.count);
     let normal_transform = Mat4::from_mat3(Mat3::from_mat4(surface.world_transform).inverse().transpose());
-    let scale_range = (rule.scale_max - rule.scale_min).max(0.0);
+    let tf = &rule.transform;
 
     for _ in 0..rule.count {
         let target = rng.next_f32() * running_sum;
@@ -750,21 +886,47 @@ fn scatter_instances_on_surface(
         let tangent = up.cross(norm).normalize();
         let bitangent = norm.cross(tangent);
 
-        let (rot_tangent, rot_bitangent) = if rule.yaw_random {
-            let yaw = rng.next_f32() * std::f32::consts::TAU;
-            let cos_y = yaw.cos();
-            let sin_y = yaw.sin();
-            (tangent * cos_y + bitangent * sin_y, -tangent * sin_y + bitangent * cos_y)
+        let (rot_x, rot_y, rot_z) = tf.rotation.sample_euler_rad(rng.next_f32(), rng.next_f32(), rng.next_f32());
+
+        let (rot_tangent, rot_norm, rot_bitangent) = if tf.upright {
+            let world_up = Vec3::Y;
+            let (sin_y, cos_y) = rot_y.sin_cos();
+            (Vec3::new(cos_y, 0.0, -sin_y), world_up, Vec3::new(sin_y, 0.0, cos_y))
         } else {
-            (tangent, bitangent)
+            let (sin_y, cos_y) = rot_y.sin_cos();
+            let mut t = tangent * cos_y + bitangent * sin_y;
+            let mut b = -tangent * sin_y + bitangent * cos_y;
+            let mut n = norm;
+
+            if rot_x.abs() > 1e-5 {
+                let qx = Quat::from_axis_angle(t, rot_x);
+                n = qx * n;
+                b = qx * b;
+            }
+            if rot_z.abs() > 1e-5 {
+                let qz = Quat::from_axis_angle(b, rot_z);
+                t = qz * t;
+                n = qz * n;
+            }
+
+            (t, n, b)
         };
 
-        let scale = rule.scale_min + rng.next_f32() * scale_range;
-        let offset_pos = pos + norm * rule.normal_offset;
+        let scale = tf.scale.sample(rng.next_f32());
+        let (pos_x, mut pos_y, pos_z) = tf.position.sample(rng.next_f32(), rng.next_f32(), rng.next_f32());
+        if let Some(norm_off) = tf.normal_offset {
+            pos_y += norm_off;
+        }
+
+        let offset_pos = if tf.upright {
+            pos + Vec3::new(pos_x, pos_y, pos_z)
+        } else {
+            pos + tangent * pos_x + norm * pos_y + bitangent * pos_z
+        };
 
         let model = Mat4::from_cols(
             (rot_tangent * scale).extend(0.0),
-            (norm * scale).extend(0.0),
+            (rot_norm * scale).extend(0.0),
             (rot_bitangent * scale).extend(0.0),
             offset_pos.extend(1.0),
         );
