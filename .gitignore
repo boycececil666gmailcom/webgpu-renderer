@@ -27,3 +27,6 @@ gltf/base_scene.glb
 *.idsig
 live_sync.png
 
+*.bak
+*.log
+Superman.pptx

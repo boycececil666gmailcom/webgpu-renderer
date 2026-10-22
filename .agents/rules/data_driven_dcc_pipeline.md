@@ -7,8 +7,8 @@ description: Project-local directive for data-driven DCC-to-Engine rendering pip
 
 1. **Blender as Single Source of Truth**:
    - `Model/asset.blend` is the sole source of truth for 3D scene data (geometry, transforms, materials, textures, lighting, and cameras).
-   - Any user request to alter visual appearance (colors, paint finishes, roughness, object positions, terrain, foliage, skies, lights) MUST be executed live in the active Blender GUI session via Blender MCP (`execute_blender_code`).
-   - Headless background execution (`blender.exe -b`) is strictly forbidden for scene authoring to prevent memory-vs-disk desynchronization with the open GUI.
+   - Any user request to alter visual appearance (colors, paint finishes, roughness, object positions, terrain, foliage, skies, lights) MUST be executed in the active Blender GUI session via Blender MCP (`execute_blender_code`) when available.
+   - If Blender MCP is unavailable, the user may explicitly authorize opening Blender manually. In that case, make scene edits in the GUI session and save/export from that session; do not use headless background execution (`blender.exe -b`) for scene authoring because it can desynchronize memory from the open GUI.
 
 2. **Shader Invariance**:
    - Never hardcode scene-specific colors, object-specific thresholds, or temporary visual hacks into WGSL shaders (`shaders/standard_pbr.wgsl`).
