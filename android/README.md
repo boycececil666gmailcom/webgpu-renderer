@@ -11,7 +11,7 @@ Pure-Rust WebGPU (`wgpu` + `winit` NativeActivity) Android build, deployment, an
 
 ## Telemetry Architecture (10s Periodic Heartbeat)
 
-The Rust engine tracks per-frame delta times, lifecycle states, and scene complexity in [`src/telemetry.rs`](file:///c:/Users/boyce/OneDrive/Desktop/webgpu-renderer/src/telemetry.rs). Every 10 seconds, it emits an aggregated heartbeat:
+The Rust engine tracks per-frame delta times, lifecycle states, and scene complexity in [`src/01_preprocessing/telemetry.rs`](file:///c:/Users/boyce/Desktop/webgpu-renderer/src/01_preprocessing/telemetry.rs). Every 10 seconds, it emits an aggregated heartbeat:
 ```
 [Telemetry] [Engine-Metrics] #1 (Uptime: 00:10) | FPS: 55.2 | FrameTime: 2.66ms (min: 1.79ms, max: 28.64ms) | Meshes: 20 | Instances: 20 | Surface: 2272x1080 | Status: Nominal
 [Telemetry] [Engine-Metrics] #2 (Uptime: 00:20) | FPS: 56.1 | FrameTime: 2.60ms (min: 1.65ms, max: 62.85ms) | Meshes: 20 | Instances: 20 | Surface: 2272x1080 | Status: Nominal

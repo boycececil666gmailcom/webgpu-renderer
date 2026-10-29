@@ -2,61 +2,467 @@
   {
     "name": "maple_tree_line",
     "enabled": true,
-    "target_surface_node": "ENV_Tree_Scatter_Surface",
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 180,
+    "count": 540,
     "seed": 421,
     "bounding_sphere_radius": 1.9,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
-        "x": [0.0, 0.0],
-        "y": [0.0, 0.03],
-        "z": [0.0, 0.0]
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          0.0,
+          0.03
+        ],
+        "z": [
+          0.0,
+          0.0
+        ]
       },
       "rotation": {
-        "x": [0.0, 0.0],
-        "y": [-180.0, 180.0],
-        "z": [-180.0, 180.0]
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          -180.0,
+          180.0
+        ],
+        "z": [
+          -180.0,
+          180.0
+        ]
       },
-      "scale": [1.0, 1.25],
+      "scale": [
+        0.85,
+        2.4
+      ],
       "upright": true
     },
     "lods": [
-      {"lod_level": 0, "prototype_asset": "tree_maple_lod0.glb", "min_screen_coverage_percent": 0.15},
-      {"lod_level": 1, "prototype_asset": "tree_maple_lod1.glb", "min_screen_coverage_percent": 0.03},
-      {"lod_level": 2, "prototype_asset": "tree_maple_lod2.glb", "min_screen_coverage_percent": 0.001}
+      {
+        "lod_level": 0,
+        "prototype_asset": "tree_maple_lod0.glb",
+        "min_screen_coverage_percent": 0.15
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "tree_maple_lod1.glb",
+        "min_screen_coverage_percent": 0.03
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "tree_maple_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
     ]
   },
   {
     "name": "aspen_tree_line",
     "enabled": true,
-    "target_surface_node": "ENV_Tree_Scatter_Surface",
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 140,
+    "count": 390,
     "seed": 739,
     "bounding_sphere_radius": 3.8,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
-        "x": [0.0, 0.0],
-        "y": [0.0, 0.03],
-        "z": [0.0, 0.0]
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          0.0,
+          0.03
+        ],
+        "z": [
+          0.0,
+          0.0
+        ]
       },
       "rotation": {
-        "x": [0.0, 0.0],
-        "y": [-180.0, 180.0],
-        "z": [-180.0, 180.0]
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          -180.0,
+          180.0
+        ],
+        "z": [
+          -180.0,
+          180.0
+        ]
       },
-      "scale": [0.9, 1.2],
+      "scale": [
+        0.8,
+        1.9
+      ],
       "upright": true
     },
     "lods": [
-      {"lod_level": 0, "prototype_asset": "tree_aspen_lod0.glb", "min_screen_coverage_percent": 0.15},
-      {"lod_level": 1, "prototype_asset": "tree_aspen_lod1.glb", "min_screen_coverage_percent": 0.03},
-      {"lod_level": 2, "prototype_asset": "tree_aspen_lod2.glb", "min_screen_coverage_percent": 0.001}
+      {
+        "lod_level": 0,
+        "prototype_asset": "tree_aspen_lod0.glb",
+        "min_screen_coverage_percent": 0.15
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "tree_aspen_lod1.glb",
+        "min_screen_coverage_percent": 0.03
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "tree_aspen_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_fern_01",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 700,
+    "seed": 1101,
+    "bounding_sphere_radius": 0.65,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "rotation": {
+        "y": [
+          -180.0,
+          180.0
+        ]
+      },
+      "scale": [
+        0.5,
+        2.0
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "fern_01_lod0.glb",
+        "min_screen_coverage_percent": 0.1
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "fern_01_lod1.glb",
+        "min_screen_coverage_percent": 0.02
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "fern_01_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_fern_02",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 700,
+    "seed": 1102,
+    "bounding_sphere_radius": 0.45,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "rotation": {
+        "y": [
+          -180.0,
+          180.0
+        ]
+      },
+      "scale": [
+        0.55,
+        2.2
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "fern_02_lod0.glb",
+        "min_screen_coverage_percent": 0.1
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "fern_02_lod1.glb",
+        "min_screen_coverage_percent": 0.02
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "fern_02_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_bush_01",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 230,
+    "seed": 1201,
+    "bounding_sphere_radius": 2.9,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "rotation": {
+        "y": [
+          -180.0,
+          180.0
+        ]
+      },
+      "scale": [
+        0.5,
+        1.65
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "bush_01_lod0.glb",
+        "min_screen_coverage_percent": 0.3
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "bush_01_lod1.glb",
+        "min_screen_coverage_percent": 0.06
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "bush_01_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_bush_02",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 270,
+    "seed": 1202,
+    "bounding_sphere_radius": 2.3,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "rotation": {
+        "y": [
+          -180.0,
+          180.0
+        ]
+      },
+      "scale": [
+        0.45,
+        1.8
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "bush_02_lod0.glb",
+        "min_screen_coverage_percent": 0.3
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "bush_02_lod1.glb",
+        "min_screen_coverage_percent": 0.06
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "bush_02_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_ground_leaves",
+    "enabled": true,
+    "target_surface_node": "ENV_Road_Asphalt_ClosedLoop",
+    "weight_channel": 1,
+    "weight_component": "R",
+    "count": 1200,
+    "seed": 1301,
+    "bounding_sphere_radius": 0.15,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "normal_offset": 0.006,
+      "rotation": {
+        "y": [
+          -180.0,
+          180.0
+        ]
+      },
+      "scale": [
+        0.45,
+        3.6
+      ]
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "leaves_lod0.glb",
+        "min_screen_coverage_percent": 0.12
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "leaves_lod1.glb",
+        "min_screen_coverage_percent": 0.025
+      },
+      {
+        "lod_level": 2,
+        "prototype_asset": "leaves_lod2.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_rock_01",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "B",
+    "count": 550,
+    "seed": 1401,
+    "bounding_sphere_radius": 0.6,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "normal_offset": -0.03,
+      "rotation": {
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          -180.0,
+          180.0
+        ],
+        "z": [
+          0.0,
+          0.0
+        ]
+      },
+      "scale": [
+        0.08,
+        0.4
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "rock_01_lod2.glb",
+        "min_screen_coverage_percent": 0.03
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "rock_01_lod3.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_rock_02",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "B",
+    "count": 140,
+    "seed": 1402,
+    "bounding_sphere_radius": 1.4,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "normal_offset": -0.08,
+      "rotation": {
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          -180.0,
+          180.0
+        ],
+        "z": [
+          0.0,
+          0.0
+        ]
+      },
+      "scale": [
+        0.3,
+        0.85
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "rock_02_lod2.glb",
+        "min_screen_coverage_percent": 0.03
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "rock_02_lod3.glb",
+        "min_screen_coverage_percent": 0.001
+      }
+    ]
+  },
+  {
+    "name": "forest_rock_03",
+    "enabled": true,
+    "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
+    "weight_channel": 1,
+    "weight_component": "B",
+    "count": 45,
+    "seed": 1403,
+    "bounding_sphere_radius": 3.5,
+    "cull_screen_coverage_percent": 0.001,
+    "transform": {
+      "normal_offset": -0.22,
+      "rotation": {
+        "x": [
+          0.0,
+          0.0
+        ],
+        "y": [
+          -180.0,
+          180.0
+        ],
+        "z": [
+          0.0,
+          0.0
+        ]
+      },
+      "scale": [
+        0.9,
+        2.4
+      ],
+      "upright": true
+    },
+    "lods": [
+      {
+        "lod_level": 0,
+        "prototype_asset": "rock_03_lod2.glb",
+        "min_screen_coverage_percent": 0.03
+      },
+      {
+        "lod_level": 1,
+        "prototype_asset": "rock_03_lod3.glb",
+        "min_screen_coverage_percent": 0.001
+      }
     ]
   }
 ]

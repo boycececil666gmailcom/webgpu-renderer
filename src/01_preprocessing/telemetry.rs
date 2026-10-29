@@ -1,10 +1,12 @@
 // #region Imports
+#[cfg(target_os = "android")]
 use std::ffi::CString;
 use std::time::{Duration, Instant};
 // #endregion
 
 // #region Types
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+#[cfg(target_os = "android")]
 const TAG: &[u8] = b"WebGPU-Engine\0";
 
 #[repr(i32)]
@@ -111,6 +113,14 @@ impl TelemetryTracker {
 
     pub fn set_resolution(&mut self, width: u32, height: u32) {
         self.resolution = (width, height);
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
+    }
+
+    pub fn resolution(&self) -> (u32, u32) {
+        self.resolution
     }
 
     fn emit_heartbeat(&mut self, elapsed: Duration) {

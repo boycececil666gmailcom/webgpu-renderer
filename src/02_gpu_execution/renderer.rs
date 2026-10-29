@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 
-use crate::gltf_loader::{GltfScene, GpuPrimitive, RenderNode, SceneLight};
-use crate::material::Material;
+use crate::preprocessing::gltf_loader::{GltfScene, GpuPrimitive, RenderNode, SceneLight};
+use crate::preprocessing::material::Material;
+use crate::preprocessing::telemetry::log_info;
 // #endregion
 
 // #region Types
@@ -94,6 +95,7 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -633,7 +635,7 @@ impl Renderer {
         ) = Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_mat, shader_source);
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
 
-        crate::telemetry::log_info("Renderer", "Init", "Unified PBR pipelines initialized successfully.");
+        log_info("Renderer", "Init", "Unified PBR pipelines initialized successfully.");
 
         Self {
             device,
@@ -702,7 +704,10 @@ impl Renderer {
             label: Some("Frame Command Encoder"),
         });
         self.record_render_pass(&mut enc, output, view, scene);
-        self.queue.submit(std::iter::once(enc.finish()));
+        let submission = self.queue.submit(std::iter::once(enc.finish()));
+        // The Android emulator Vulkan path can present frames with missing draws
+        // while submissions overlap. Complete this frame before presenting it.
+        self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
     }
 }
 // #endregion

@@ -19,8 +19,10 @@ __pycache__/
 # Heavy binary 3D assets (>100MB) and baked textures
 Model/*.blend
 Model/textures/
+Model/assets/
 Model/*.png0001.png
 gltf/base_scene.glb
+gltf/test_terrain*.glb
 
 # Transient test artifacts and agent cache
 .kilo/

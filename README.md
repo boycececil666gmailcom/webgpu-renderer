@@ -35,11 +35,20 @@ webgpu-renderer/
 ├── shaders/
 │   └── shader.wgsl          # WebGPU WGSL vertex and fragment shader
 └── src/
-    ├── lib.rs               # Library entry point (android_main & lifecycle)
-    ├── config.rs            # Camera, lighting, and target frame rate config
-    ├── material.rs          # PBR materials & GPU texture lifecycle
-    ├── gltf_loader.rs       # glTF 2.0 / GLB model loader & buffer caching
-    └── renderer.rs          # Render pipelines, passes, and uniform buffers
+    ├── lib.rs                  # Library entry point (android_main, lifecycle, 4-step orchestration)
+    ├── preprocessing/          # Step 1: CPU-centered pre-processing & preparation
+    │   ├── config.rs           # Configuration (FPS, assets, textures)
+    │   ├── gltf_loader.rs      # glTF 2.0 loader, scene graph, CPU LODs & culling
+    │   ├── material.rs         # PBR material uniforms & bind groups
+    │   ├── telemetry.rs        # Platform logging & performance metrics
+    │   └── mod.rs              # Preprocessing module root
+    ├── execution/              # Step 2: GPU rasterization & draw execution
+    │   ├── renderer.rs         # PBR pipelines, depth attachment, render pass & draw calls
+    │   └── mod.rs              # Execution module root
+    └── presentation/           # Steps 3 & 4: Post-processing & Swapchain presentation
+        ├── postprocess.rs      # Step 3: Image-space post-processing & tone mapping hook
+        ├── swapchain.rs        # Step 4: Surface configuration, swapchain resize & present
+        └── mod.rs              # Presentation module root
 ```
 
 ---

@@ -25,7 +25,7 @@ def setup_cycles_optix(scene: bpy.types.Scene) -> None:
 
 def create_circular_road_mesh(name: str = "ENV_Road_Asphalt_ClosedLoop",
                               radius_center: float = 20.0,
-                              width: float = 6.0,
+                               width: float = 8.0,
                               num_radial: int = 128,
                               uv_repeats: float = 32.0) -> bpy.types.Object:
     """Builds a seamless closed circular road ring with realistic cross-section camber and shoulders."""
@@ -88,6 +88,7 @@ def create_circular_road_mesh(name: str = "ENV_Road_Asphalt_ClosedLoop",
     obj = bpy.data.objects.new(name, mesh)
     log("create_circular_road_mesh", f"Created {name}: {len(mesh.vertices)} verts, {len(mesh.polygons)} quads.")
     return obj
+
 
 def create_terrain_mesh(name: str = "ENV_Terrain_Forest_Floor_Layered",
                         size: float = 60.0,
@@ -441,18 +442,17 @@ def execute_pipeline():
         log("execute_pipeline", f"Preserved old terrain as {old_terrain.name} (hidden for reference).")
 
     # 3. Create new circular road mesh
-    # Center radius 20m, width 6m (inner 17m, outer 23m)
+    # Center radius 20m, width 8m (inner 16m, outer 24m)
     road_mat = bpy.data.materials.get("MAT_ENV_Road_Asphalt_glTF")
     assert road_mat is not None, "Material MAT_ENV_Road_Asphalt_glTF missing"
 
-    # Remove any prior instance if re-running
+    # Replace the road without retaining stale geometry from earlier widths.
     existing_loop = bpy.data.objects.get("ENV_Road_Asphalt_ClosedLoop")
     if existing_loop:
         bpy.data.objects.remove(existing_loop, do_unlink=True)
-
     new_road = create_circular_road_mesh(name="ENV_Road_Asphalt_ClosedLoop",
                                          radius_center=20.0,
-                                         width=6.0,
+                                         width=8.0,
                                          num_radial=128,
                                          uv_repeats=32.0)
     new_road.data.materials.append(road_mat)
@@ -530,4 +530,3 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 #endregion
-

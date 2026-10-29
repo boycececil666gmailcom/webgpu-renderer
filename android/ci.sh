@@ -75,7 +75,7 @@ ensure_emulator() {
     step "1/4" "Checking Android Device / Launching Emulator"
     mkdir -p "$LOG_DIR"
     "$ADB" start-server >/dev/null 2>&1 || true
-    TARGET_SERIAL=$("$ADB" devices | grep -E '^[a-zA-Z0-9._-]+[[:space:]]+device' | head -n 1 | awk '{print $1}' || true)
+    TARGET_SERIAL=$("$ADB" devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')
     if [ "$RESTART_EMU" = true ] && [ -n "$TARGET_SERIAL" ]; then
         echo "[CI-Emulator] Restart requested. Stopping current device $TARGET_SERIAL..."
         "$ADB" -s "$TARGET_SERIAL" emu kill >/dev/null 2>&1 || true
@@ -84,13 +84,49 @@ ensure_emulator() {
     fi
     if [ -z "$TARGET_SERIAL" ]; then
         echo "[CI-Emulator] Starting $AVD (logs: logs/emulator_*.log)..."
+        local avd_home="${ANDROID_AVD_HOME:-${ANDROID_USER_HOME:-$HOME/.android}/avd}"
+        local avd_dir="$avd_home/$AVD.avd"
+        local avd_config="$avd_dir/config.ini"
+        local user_ini="$avd_dir/emulator-user.ini"
+        if [ -f "$avd_config" ]; then
+            if grep -q '^hw\.initialOrientation=' "$avd_config"; then
+                sed -i 's/^hw\.initialOrientation=.*/hw.initialOrientation=landscape/' "$avd_config"
+            else
+                printf '\nhw.initialOrientation=landscape\n' >> "$avd_config"
+            fi
+        fi
+        if [ -f "$user_ini" ]; then
+            sed -i \
+                -e 's/^window\.x = .*/window.x = 0/' \
+                -e 's/^window\.y = .*/window.y = 0/' \
+                "$user_ini"
+        fi
         local args=("-avd" "$AVD" "-gpu" "host" "-accel" "on" "-feature" "Vulkan" "-no-snapshot-load")
         [ "$HEADLESS" = true ] && args+=("-no-window")
         nohup "$EMULATOR" "${args[@]}" > "$LOG_DIR/emulator_stdout.log" 2> "$LOG_DIR/emulator_stderr.log" & disown
-        "$ADB" wait-for-device
-        while [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" != "1" ]; do sleep 1; done
-        TARGET_SERIAL=$("$ADB" devices | grep -E '^[a-zA-Z0-9._-]+[[:space:]]+device' | head -n 1 | awk '{print $1}' || true)
+        local attempts=0
+        while [ -z "$TARGET_SERIAL" ] && [ "$attempts" -lt 180 ]; do
+            TARGET_SERIAL=$("$ADB" devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')
+            [ -n "$TARGET_SERIAL" ] || { sleep 1; attempts=$((attempts + 1)); }
+        done
+        if [ -z "$TARGET_SERIAL" ]; then
+            echo "[CI-Emulator] No ready emulator appeared in ADB within 180 seconds." >&2
+            echo "[CI-Emulator] Connected devices:" >&2
+            "$ADB" devices -l >&2 || true
+            echo "[CI-Emulator] See $LOG_DIR/emulator_stdout.log and emulator_stderr.log." >&2
+            return 1
+        fi
+        "$ADB" -s "$TARGET_SERIAL" wait-for-device
+        while [ "$("$ADB" -s "$TARGET_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')" != "1" ]; do sleep 1; done
     fi
+    if [ -z "$TARGET_SERIAL" ]; then
+        echo "[CI-Emulator] No ready emulator found in ADB." >&2
+        echo "[CI-Emulator] Connected devices:" >&2
+        "$ADB" devices -l >&2 || true
+        return 1
+    fi
+    "$ADB" -s "$TARGET_SERIAL" shell settings put system accelerometer_rotation 0 >/dev/null 2>&1 || true
+    "$ADB" -s "$TARGET_SERIAL" shell settings put system user_rotation 1 >/dev/null 2>&1 || true
     echo "[CI-Emulator] Target Device: $TARGET_SERIAL"
 }
 
@@ -123,8 +159,10 @@ deploy_app() {
         if [ -f "$src" ]; then
             local name; name=$(basename "$src")
             local size; size=$(wc -c < "$src" | tr -d ' ')
-            local remote; remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "ls -l /sdcard/Android/data/$PACKAGE/files/$name 2>/dev/null" | tr -d '\r')
-            if [[ "$remote" != *"$size"* ]]; then
+            local remote; remote=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "wc -c </sdcard/Android/data/$PACKAGE/files/$name 2>/dev/null" | tr -d '\r ')
+            local local_hash; local_hash=$(sha256sum "$src" | awk '{print $1}')
+            local remote_hash; remote_hash=$(MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell "toybox sha256sum /sdcard/Android/data/$PACKAGE/files/$name 2>/dev/null" | awk '{print $1}' | tr -d '\r')
+            if [[ "$remote" != "$size" || "$remote_hash" != "$local_hash" ]]; then
                 local win_src; win_src=$(cygpath -w "$src" 2>/dev/null || echo "$src")
                 MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell mkdir -p "/sdcard/Android/data/$PACKAGE/files" >/dev/null 2>&1 || true
                 MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" push "$win_src" "/sdcard/Android/data/$PACKAGE/files/$name" >/dev/null
@@ -146,6 +184,11 @@ deploy_app() {
     sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod0.glb"
     sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod1.glb"
     sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod2.glb"
+    for plant in fern_01 fern_02 bush_01 bush_02 rock_01 rock_02 rock_03; do
+        for lod in 0 1 2 3; do
+            sync_file "$PROJECT_ROOT/gltf/${plant}_lod${lod}.glb"
+        done
+    done
     sync_file "$PROJECT_ROOT/config/scatter.json"
     sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
 }
@@ -158,13 +201,6 @@ stream_telemetry() {
     "$ADB" -s "$TARGET_SERIAL" shell settings put system user_rotation 1 >/dev/null 2>&1 || true
     "$ADB" -s "$TARGET_SERIAL" logcat -c
     "$ADB" -s "$TARGET_SERIAL" shell am start -S -n "$PACKAGE/$ACTIVITY" >/dev/null 2>&1 || true
-
-    # Capture initial screenshot in background after the async scene load settles
-    (
-        sleep 25
-        "$ADB" -s "$TARGET_SERIAL" exec-out screencap -p > "$LOG_DIR/screenshot_latest.png" 2>/dev/null || true
-        echo "[CI-Stream] Framebuffer captured: logs/screenshot_latest.png"
-    ) &
 
     if [ "$DURATION" -gt 0 ]; then
         step "4/4" "Streaming Telemetry (${DURATION}s live sample)"
@@ -186,6 +222,13 @@ stream_telemetry() {
             sleep 0.5
         done
         kill "$adb_pid" 2>/dev/null || true
+
+        # Synchronously capture settled verification frame
+        local win_dest
+        win_dest=$(cygpath -w "$LOG_DIR/screenshot_latest.png" 2>/dev/null || echo "$LOG_DIR/screenshot_latest.png")
+        MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" shell screencap -p /data/local/tmp/screenshot_render.png
+        MSYS_NO_PATHCONV=1 "$ADB" -s "$TARGET_SERIAL" pull /data/local/tmp/screenshot_render.png "$win_dest"
+        echo "[CI-Stream] Framebuffer captured: logs/screenshot_latest.png"
     else
         step "4/4" "Streaming Continuous Telemetry (heartbeat: 10s, Ctrl+C to stop)"
         "$ADB" -s "$TARGET_SERIAL" logcat -v time -s $filter | tee "$logcat_path" | while IFS= read -r line; do

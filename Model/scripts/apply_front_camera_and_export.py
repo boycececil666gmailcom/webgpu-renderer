@@ -8,12 +8,13 @@ from mathutils import Vector
 
 #region Types
 class SceneConfig:
-    BLEND_PATH = r"c:\Users\boyce\OneDrive\Desktop\webgpu-renderer\Model\asset.blend"
-    GLB_PATH = r"c:\Users\boyce\OneDrive\Desktop\webgpu-renderer\gltf\base_scene.glb"
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    BLEND_PATH = os.path.join(PROJECT_ROOT, "Model", "asset.blend")
+    GLB_PATH = os.path.join(PROJECT_ROOT, "gltf", "base_scene.glb")
     
     # Camera front-facing hero shot coordinates
-    CAM_LOC = Vector((-27.0, 14.0, 2.2))
-    CAM_TARGET = Vector((-20.0, 2.0, 0.8))
+    CAM_LOC = Vector((-22.0, -12.0, 5.5))
+    CAM_TARGET = Vector((-12.0, 0.0, 1.1))
     
     ENV_OBJECTS = [
         "ENV_Road_Asphalt_ClosedLoop",
@@ -32,9 +33,11 @@ def log_step(msg: str):
 #region Camera
 def configure_camera():
     log_step("Configuring CAM_Scene_Follow for front-facing hero view...")
-    cam_obj = bpy.data.objects.get("CAM_Scene_Follow")
+    cam_obj = bpy.data.objects.get("CAM_Scene_Follow") or bpy.data.objects.get("Camera")
     if not cam_obj:
-        raise RuntimeError("CAM_Scene_Follow not found in scene!")
+        raise RuntimeError("No scene camera object found!")
+    cam_obj.name = "CAM_Scene_Follow"
+    bpy.context.scene.camera = cam_obj
 
     # Remove any existing track-to constraints to prevent interference
     for c in list(cam_obj.constraints):
@@ -49,7 +52,7 @@ def configure_camera():
     cam_obj.rotation_euler = rot_quat.to_euler()
 
     cam_data = cam_obj.data
-    cam_data.lens = 45.0
+    cam_data.lens = 56.0
     cam_data.sensor_width = 36.0
     cam_data.clip_start = 0.1
     cam_data.clip_end = 250.0
@@ -112,4 +115,3 @@ if __name__ == '__main__':
     orchestrate_front_camera_update()
     sys.exit(0)
 #endregion
-

@@ -20,9 +20,15 @@ impl Config {
             target_fps: 60,
             default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
             default_env_map: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/autumn_forest_01_1k.png".to_string(),
-            max_texture_size: 2048,
+            max_texture_size: 4096,
             scatter_config: Some("/sdcard/Android/data/org.antigravity.webgpurenderer/files/scatter.json".to_string()),
         }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::create_default()
     }
 }
 // #endregion
@@ -31,8 +37,23 @@ impl Config {
 impl Config {
     pub fn load() -> Self {
         let cfg = Self::create_default();
-        crate::telemetry::log_info("Config", "Load", "Engine configuration initialized.");
+        crate::preprocessing::telemetry::log_info("Config", "Load", "Engine configuration initialized.");
         cfg
+    }
+}
+// #endregion
+
+// #region Tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults() {
+        let config = Config::default();
+        assert_eq!(config.target_fps, 60);
+        assert_eq!(config.max_texture_size, 4096);
+        assert!(!config.default_model.is_empty());
     }
 }
 // #endregion

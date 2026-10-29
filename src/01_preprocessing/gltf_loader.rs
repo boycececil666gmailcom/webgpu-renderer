@@ -5,7 +5,7 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
-use crate::material::Material;
+use super::material::Material;
 // #endregion
 
 // #region Types
@@ -51,6 +51,7 @@ pub struct RawPrimitiveData {
     pub indices: Vec<u32>,
     pub color0: Vec<[f32; 4]>,
     pub color1: Vec<[f32; 4]>,
+    pub color2: Vec<[f32; 4]>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +62,7 @@ pub struct SurfaceData {
     pub indices: Vec<u32>,
     pub color0: Vec<[f32; 4]>,
     pub color1: Vec<[f32; 4]>,
+    pub color2: Vec<[f32; 4]>,
     pub world_transform: Mat4,
 }
 
@@ -305,11 +307,7 @@ impl SceneCamera {
     }
 
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        if let Some(far) = self.zfar {
-            Mat4::perspective_rh(self.yfov, aspect, self.znear, far)
-        } else {
-            Mat4::perspective_infinite_rh(self.yfov, aspect, self.znear)
-        }
+        Mat4::perspective_infinite_rh(self.yfov, aspect, self.znear)
     }
 }
 
@@ -554,12 +552,18 @@ impl GltfScene {
                             .map(|c| c.into_rgba_f32().collect())
                             .unwrap_or_default();
 
+                        let color2: Vec<[f32; 4]> = reader
+                            .read_colors(2)
+                            .map(|c| c.into_rgba_f32().collect())
+                            .unwrap_or_default();
+
                         raw_prims.push(RawPrimitiveData {
                             positions: positions.iter().map(|p| Vec3::from_slice(p)).collect(),
                             normals: normals.iter().map(|n| Vec3::from_slice(n)).collect(),
                             indices: indices.clone().unwrap_or_else(|| (0..positions.len() as u32).collect()),
                             color0,
                             color1,
+                            color2,
                         });
 
                         let local_mat_idx = prim.material().index().unwrap_or(0);
@@ -644,12 +648,14 @@ impl GltfScene {
                     let mut idx = Vec::new();
                     let mut c0 = Vec::new();
                     let mut c1 = Vec::new();
+                    let mut c2 = Vec::new();
                     let mut base = 0u32;
                     for p in prims {
                         pos.extend_from_slice(&p.positions);
                         norm.extend_from_slice(&p.normals);
                         c0.extend_from_slice(&p.color0);
                         c1.extend_from_slice(&p.color1);
+                        c2.extend_from_slice(&p.color2);
                         for &i in &p.indices {
                             idx.push(i + base);
                         }
@@ -663,6 +669,7 @@ impl GltfScene {
                             indices: idx,
                             color0: c0,
                             color1: c1,
+                            color2: c2,
                             world_transform,
                         });
                     }
@@ -800,13 +807,23 @@ fn resolve_surface_weights(surface: &SurfaceData, channel: u32, component: &str)
         "A" | "3" => 3,
         _ => 0,
     };
-    if channel == 1 && !surface.color1.is_empty() {
-        surface.color1.iter().map(|c| c[comp_idx]).collect()
-    } else if !surface.color0.is_empty() {
-        surface.color0.iter().map(|c| c[comp_idx]).collect()
-    } else {
-        vec![1.0; surface.positions.len()]
-    }
+    let colors = match channel {
+        2 if !surface.color2.is_empty() => &surface.color2,
+        1 if !surface.color1.is_empty() => &surface.color1,
+        0 if !surface.color0.is_empty() => &surface.color0,
+        _ => {
+            if !surface.color2.is_empty() {
+                &surface.color2
+            } else if !surface.color1.is_empty() {
+                &surface.color1
+            } else if !surface.color0.is_empty() {
+                &surface.color0
+            } else {
+                return vec![1.0; surface.positions.len()];
+            }
+        }
+    };
+    colors.iter().map(|c| c[comp_idx]).collect()
 }
 
 fn scatter_instances_on_surface(
@@ -837,9 +854,9 @@ fn scatter_instances_on_surface(
         let w0 = weights.get(i0).copied().unwrap_or(1.0);
         let w1 = weights.get(i1).copied().unwrap_or(1.0);
         let w2 = weights.get(i2).copied().unwrap_or(1.0);
-        let avg_w = (w0 + w1 + w2) / 3.0;
+        let max_w = w0.max(w1).max(w2);
 
-        let tri_w = area * avg_w;
+        let tri_w = if max_w > 0.001 { area * ((w0 + w1 + w2) / 3.0) } else { 0.0 };
         running_sum += tri_w;
         cdf.push(running_sum);
     }
@@ -853,7 +870,11 @@ fn scatter_instances_on_surface(
     let normal_transform = Mat4::from_mat3(Mat3::from_mat4(surface.world_transform).inverse().transpose());
     let tf = &rule.transform;
 
-    for _ in 0..rule.count {
+    let mut attempts = 0;
+    let max_attempts = rule.count * 10;
+
+    while instances.len() < rule.count && attempts < max_attempts {
+        attempts += 1;
         let target = rng.next_f32() * running_sum;
         let tri_idx = match cdf.binary_search_by(|val| val.total_cmp(&target)) {
             Ok(idx) => idx.min(tri_count - 1),
@@ -864,13 +885,9 @@ fn scatter_instances_on_surface(
         let i1 = surface.indices[3 * tri_idx + 1] as usize;
         let i2 = surface.indices[3 * tri_idx + 2] as usize;
 
-        let p0 = surface.world_transform.transform_point3(surface.positions[i0]);
-        let p1 = surface.world_transform.transform_point3(surface.positions[i1]);
-        let p2 = surface.world_transform.transform_point3(surface.positions[i2]);
-
-        let n0 = normal_transform.transform_vector3(surface.normals[i0]);
-        let n1 = normal_transform.transform_vector3(surface.normals[i1]);
-        let n2 = normal_transform.transform_vector3(surface.normals[i2]);
+        let w0 = weights.get(i0).copied().unwrap_or(1.0);
+        let w1 = weights.get(i1).copied().unwrap_or(1.0);
+        let w2 = weights.get(i2).copied().unwrap_or(1.0);
 
         let r1 = rng.next_f32();
         let r2 = rng.next_f32();
@@ -878,6 +895,20 @@ fn scatter_instances_on_surface(
         let u = 1.0 - sqrt_r1;
         let v = r2 * sqrt_r1;
         let w = 1.0 - u - v;
+
+        // Rejection sampling against surface vertex weight to guarantee road/boundary clearance
+        let point_weight = w0 * u + w1 * v + w2 * w;
+        if point_weight <= 0.01 || rng.next_f32() > point_weight {
+            continue;
+        }
+
+        let p0 = surface.world_transform.transform_point3(surface.positions[i0]);
+        let p1 = surface.world_transform.transform_point3(surface.positions[i1]);
+        let p2 = surface.world_transform.transform_point3(surface.positions[i2]);
+
+        let n0 = normal_transform.transform_vector3(surface.normals[i0]);
+        let n1 = normal_transform.transform_vector3(surface.normals[i1]);
+        let n2 = normal_transform.transform_vector3(surface.normals[i2]);
 
         let pos = p0 * u + p1 * v + p2 * w;
         let norm = (n0 * u + n1 * v + n2 * w).normalize();
