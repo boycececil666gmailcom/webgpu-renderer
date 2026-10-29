@@ -8,12 +8,13 @@ use winit::event_loop::EventLoopBuilder;
 #[cfg(target_os = "android")]
 use winit::platform::android::{activity::AndroidApp, EventLoopBuilderExtAndroid};
 use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
     keyboard::{Key, NamedKey},
     window::{Window, WindowBuilder},
 };
 
+use glam::{Mat4, Vec3};
 use crate::config::Config;
 use crate::preprocessing::gltf_loader::GltfScene;
 use crate::preprocessing::telemetry::{log_error, log_info, log_warn, TelemetryTracker};
@@ -23,6 +24,29 @@ use crate::swapchain::Swapchain;
 // #endregion
 
 // #region Types
+#[derive(Debug, Clone)]
+struct CameraController {
+    is_orbiting: bool,
+    is_panning: bool,
+    last_cursor: Option<(f64, f64)>,
+    pivot: Vec3,
+    distance: f32,
+    initial_transform: Option<Mat4>,
+}
+
+impl Default for CameraController {
+    fn default() -> Self {
+        Self {
+            is_orbiting: false,
+            is_panning: false,
+            last_cursor: None,
+            pivot: Vec3::new(-45.0, 1.2, 0.0),
+            distance: 9.0,
+            initial_transform: None,
+        }
+    }
+}
+
 struct RenderState {
     swapchain: Swapchain,
     renderer: Renderer,
@@ -30,6 +54,7 @@ struct RenderState {
     scene_rx: Option<Receiver<Result<GltfScene, String>>>,
     telemetry: TelemetryTracker,
     post_processor: PostProcessor,
+    camera_controller: CameraController,
 }
 // #endregion
 
@@ -127,6 +152,20 @@ fn take_loaded_scene(state: &mut RenderState) {
             ));
             state.scene = Some(scene);
             state.scene_rx = None;
+
+            if let Some(ref sc) = state.scene {
+                let eye = sc.camera.position();
+                let forward = sc.camera.world_transform.transform_vector3(-Vec3::Z);
+                let forward_norm = if forward.length_squared() > 1e-4 {
+                    forward.normalize()
+                } else {
+                    -Vec3::Z
+                };
+                let distance = 9.0f32;
+                state.camera_controller.pivot = eye + forward_norm * distance;
+                state.camera_controller.distance = distance;
+                state.camera_controller.initial_transform = Some(sc.camera.world_transform);
+            }
         }
         Ok(Err(error)) => {
             log_error("Engine", "Load", &format!("Failed to load glTF model: {error}"));
@@ -215,6 +254,7 @@ fn init_render_state(
         scene_rx: Some(scene_rx),
         telemetry,
         post_processor: PostProcessor::new(),
+        camera_controller: CameraController::default(),
     })
 }
 
@@ -305,16 +345,115 @@ fn handle_window_event(
                 }
             }
         }
+        WindowEvent::MouseInput { state: btn_state, button, .. } => {
+            if let Some(ref mut st) = state_opt {
+                match button {
+                    MouseButton::Left => {
+                        st.camera_controller.is_orbiting = *btn_state == ElementState::Pressed;
+                        if !st.camera_controller.is_orbiting {
+                            st.camera_controller.last_cursor = None;
+                        }
+                    }
+                    MouseButton::Right | MouseButton::Middle => {
+                        st.camera_controller.is_panning = *btn_state == ElementState::Pressed;
+                        if !st.camera_controller.is_panning {
+                            st.camera_controller.last_cursor = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        WindowEvent::CursorMoved { position, .. } => {
+            if let Some(ref mut st) = state_opt {
+                let (curr_x, curr_y) = (position.x, position.y);
+                if let Some((last_x, last_y)) = st.camera_controller.last_cursor {
+                    let dx = (curr_x - last_x) as f32;
+                    let dy = (curr_y - last_y) as f32;
+                    if let Some(ref mut scene) = st.scene {
+                        if st.camera_controller.is_orbiting {
+                            let eye = scene.camera.position();
+                            let to_eye = eye - st.camera_controller.pivot;
+                            let radius = to_eye.length().max(0.1);
+
+                            // Yaw around world Y
+                            let yaw = Mat4::from_rotation_y(-dx * 0.005);
+                            let to_eye_yawed = yaw.transform_vector3(to_eye);
+
+                            // Pitch around camera right axis
+                            let right = scene.camera.world_transform.transform_vector3(Vec3::X).normalize();
+                            let pitch = Mat4::from_axis_angle(right, -dy * 0.005);
+                            let new_to_eye = pitch.transform_vector3(to_eye_yawed).normalize() * radius;
+
+                            let new_eye = st.camera_controller.pivot + new_to_eye;
+                            let new_view = Mat4::look_at_rh(new_eye, st.camera_controller.pivot, Vec3::Y);
+                            scene.camera.world_transform = new_view.inverse();
+                        } else if st.camera_controller.is_panning {
+                            let right = scene.camera.world_transform.transform_vector3(Vec3::X).normalize();
+                            let up = scene.camera.world_transform.transform_vector3(Vec3::Y).normalize();
+                            let pan = (-right * dx + up * dy) * 0.008 * (st.camera_controller.distance / 10.0).max(0.1);
+
+                            st.camera_controller.pivot += pan;
+                            let new_eye = scene.camera.position() + pan;
+                            let new_view = Mat4::look_at_rh(new_eye, st.camera_controller.pivot, Vec3::Y);
+                            scene.camera.world_transform = new_view.inverse();
+                        }
+                    }
+                }
+                if st.camera_controller.is_orbiting || st.camera_controller.is_panning {
+                    st.camera_controller.last_cursor = Some((curr_x, curr_y));
+                }
+            }
+        }
+        WindowEvent::MouseWheel { delta, .. } => {
+            if let Some(ref mut st) = state_opt {
+                let scroll_y = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(p) => (p.y as f32) * 0.02,
+                };
+                if let Some(ref mut scene) = st.scene {
+                    let eye = scene.camera.position();
+                    let to_eye = eye - st.camera_controller.pivot;
+                    let curr_dist = to_eye.length();
+                    let factor = (1.0 - scroll_y * 0.1).clamp(0.2, 5.0);
+                    let new_dist = (curr_dist * factor).clamp(0.5, 300.0);
+                    st.camera_controller.distance = new_dist;
+
+                    let dir = if curr_dist > 1e-4 { to_eye.normalize() } else { Vec3::Z };
+                    let new_eye = st.camera_controller.pivot + dir * new_dist;
+                    let new_view = Mat4::look_at_rh(new_eye, st.camera_controller.pivot, Vec3::Y);
+                    scene.camera.world_transform = new_view.inverse();
+                }
+            }
+        }
         WindowEvent::KeyboardInput {
             event:
                 KeyEvent {
-                    logical_key: Key::Named(NamedKey::Escape),
+                    logical_key: ref key,
                     state: ElementState::Pressed,
                     ..
                 },
             ..
         } => {
-            target.exit();
+            match key {
+                Key::Named(NamedKey::Escape) => {
+                    target.exit();
+                }
+                Key::Character(s) if s.eq_ignore_ascii_case("r") => {
+                    if let Some(ref mut st) = state_opt {
+                        if let (Some(ref mut sc), Some(ref init)) = (&mut st.scene, &st.camera_controller.initial_transform) {
+                            sc.camera.world_transform = *init;
+                            let eye = sc.camera.position();
+                            let forward = sc.camera.world_transform.transform_vector3(-Vec3::Z).normalize();
+                            st.camera_controller.distance = 9.0;
+                            st.camera_controller.pivot = eye + forward * 9.0;
+                            st.camera_controller.last_cursor = None;
+                            log_info("CameraController", "Reset", "Camera view reset to glTF baseline.");
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
         WindowEvent::CloseRequested => {
             target.exit();

@@ -694,7 +694,16 @@ impl GltfScene {
                 });
 
                 if let Some(&(min, max)) = mesh_bounds.get(mesh_index) {
-                    Self::expand_bounds(min, max, &world_transform, &mut bounds_min, &mut bounds_max);
+                    let is_sky = node_name
+                        .as_deref()
+                        .map(|n| {
+                            let l = n.to_lowercase();
+                            l.contains("sky") || l.contains("dome")
+                        })
+                        .unwrap_or(false);
+                    if !is_sky {
+                        Self::expand_bounds(min, max, &world_transform, &mut bounds_min, &mut bounds_max);
+                    }
                 }
             }
 
@@ -742,10 +751,15 @@ impl GltfScene {
     }
 
     fn create_fallback_camera(bounds: &(Vec3, Vec3)) -> SceneCamera {
-        let center = (bounds.0 + bounds.1) * 0.5;
-        let extents = bounds.1 - bounds.0;
-        let radius = extents.length().max(1.0);
-        let eye = center + Vec3::new(0.0, radius * 0.5, radius * 1.8);
+        let (b_min, b_max) = if bounds.0.x <= bounds.1.x {
+            *bounds
+        } else {
+            (Vec3::new(-50.0, 0.0, -10.0), Vec3::new(-40.0, 5.0, 5.0))
+        };
+        let center = (b_min + b_max) * 0.5;
+        let extents = b_max - b_min;
+        let radius = extents.length().max(2.0);
+        let eye = center + Vec3::new(0.0, radius * 0.35, radius * 1.2);
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         SceneCamera {
             name: Some("AutoFramingFallbackCamera".to_string()),
