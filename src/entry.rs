@@ -8,8 +8,9 @@ use winit::event_loop::EventLoopBuilder;
 #[cfg(target_os = "android")]
 use winit::platform::android::{activity::AndroidApp, EventLoopBuilderExtAndroid};
 use winit::{
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
+    keyboard::{Key, NamedKey},
     window::{Window, WindowBuilder},
 };
 
@@ -39,8 +40,23 @@ fn create_android_event_loop(app: AndroidApp) -> Result<EventLoop<()>, Box<dyn s
     Ok(event_loop)
 }
 
+pub fn create_event_loop() -> Result<EventLoop<()>, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "android")]
+    {
+        Err("Direct binary execution is not supported on Android; use android_main with NativeActivity.".into())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let event_loop = EventLoop::new()?;
+        Ok(event_loop)
+    }
+}
+
 fn create_window(event_loop: &EventLoop<()>) -> Result<Arc<Window>, Box<dyn std::error::Error>> {
-    let window = WindowBuilder::new().build(event_loop)?;
+    let builder = WindowBuilder::new().with_title("WebGPU Viewer");
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+    let window = builder.build(event_loop)?;
     Ok(Arc::new(window))
 }
 
@@ -129,7 +145,7 @@ fn init_render_state(
     instance: &wgpu::Instance,
     config: &Config,
 ) -> Option<RenderState> {
-    log_info("Engine", "Lifecycle", "Android surface acquired. Initializing Vulkan/WebGPU device...");
+    log_info("Engine", "Lifecycle", "Surface acquired. Initializing WebGPU device...");
     let surface = match instance.create_surface(window.clone()) {
         Ok(s) => s,
         Err(e) => {
@@ -152,7 +168,7 @@ fn init_render_state(
 
     let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            label: Some("WebGPU Android Device"),
+            label: Some("WebGPU Device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             memory_hints: Default::default(),
@@ -289,6 +305,20 @@ fn handle_window_event(
                 }
             }
         }
+        WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    logical_key: Key::Named(NamedKey::Escape),
+                    state: ElementState::Pressed,
+                    ..
+                },
+            ..
+        } => {
+            target.exit();
+        }
+        WindowEvent::CloseRequested => {
+            target.exit();
+        }
         _ => {}
     }
 }
@@ -301,30 +331,48 @@ fn handle_engine_event(
     config: &Config,
     target_frame_time: Duration,
     render_state: &mut Option<RenderState>,
+    is_suspended: &mut bool,
 ) {
     match event {
         Event::Resumed => {
+            *is_suspended = false;
             if render_state.is_none() {
                 log_info("Engine", "Lifecycle", "Resumed event received. Acquiring surface...");
                 *render_state = init_render_state(window.clone(), instance, config);
+                if render_state.is_none() {
+                    log_error("Engine", "Fatal", "Failed to initialize render state on resume; terminating.");
+                    target.exit();
+                }
             }
         }
         Event::Suspended => {
             log_info("Engine", "Lifecycle", "Suspended event received. Dropping surface to conserve resources.");
+            *is_suspended = true;
             *render_state = None;
         }
         Event::WindowEvent { ref event, window_id } if window_id == window.id() => {
             handle_window_event(event, config, target, target_frame_time, render_state);
         }
         Event::AboutToWait => {
-            window.request_redraw();
+            #[cfg(not(target_os = "android"))]
+            if !*is_suspended && render_state.is_none() {
+                log_info("Engine", "Lifecycle", "Acquiring surface on desktop event loop start...");
+                *render_state = init_render_state(window.clone(), instance, config);
+                if render_state.is_none() {
+                    log_error("Engine", "Fatal", "Failed to initialize render state on desktop start; terminating.");
+                    target.exit();
+                }
+            }
+            if render_state.is_some() {
+                window.request_redraw();
+            }
         }
         _ => {}
     }
 }
 // #endregion
 
-// #region Core Entry Point
+// #region Core
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub fn android_main(app: AndroidApp) {
@@ -346,9 +394,19 @@ pub fn run_engine(event_loop: EventLoop<()>, config: Config) -> Result<(), Box<d
     });
     let target_frame_time = compute_frame_budget(config.target_fps);
     let mut render_state: Option<RenderState> = None;
+    let mut is_suspended = false;
 
     event_loop.run(move |event, target| {
-        handle_engine_event(event, target, &window, &instance, &config, target_frame_time, &mut render_state);
+        handle_engine_event(
+            event,
+            target,
+            &window,
+            &instance,
+            &config,
+            target_frame_time,
+            &mut render_state,
+            &mut is_suspended,
+        );
     })?;
 
     Ok(())

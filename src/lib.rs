@@ -1,4 +1,4 @@
-// #region Imports & Modules
+// #region Modules
 pub mod config;
 pub mod entry;
 pub mod swapchain;
@@ -13,14 +13,12 @@ pub mod gpu_execution;
 pub mod post_processing;
 // #endregion
 
-// #region Pipeline Stage Aliases
+// #region Aliases
 pub use preprocessing as step1_preprocessing;
 pub use gpu_execution as step2_gpu_execution;
 pub use post_processing as step3_post_processing;
 pub use swapchain as step4_presentation;
-// #endregion
 
-// #region Backward-Compatible Module Aliases
 pub use gpu_execution as execution;
 pub use gpu_execution as render_execution;
 pub use preprocessing as pre_processing;
@@ -28,7 +26,7 @@ pub use post_processing as postprocessing;
 pub use swapchain as presentation;
 // #endregion
 
-// #region Module Re-exports
+// #region Exports
 pub use config::Config;
 pub use gpu_execution::renderer::{self, FrameUniforms, Renderer};
 pub use post_processing::postprocess::{self, PostProcessor};
@@ -38,8 +36,9 @@ pub use preprocessing::telemetry::{self, log_error, log_info, log_warn, Telemetr
 pub use swapchain::Swapchain;
 // #endregion
 
-// #region Application Entry Points
+// #region Entry
 #[cfg(target_os = "android")]
 pub use entry::android_main;
 pub use entry::run_engine;
+pub use entry::create_event_loop;
 // #endregion

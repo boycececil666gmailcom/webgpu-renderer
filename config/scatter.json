@@ -8,6 +8,7 @@
     "count": 350,
     "seed": 421,
     "bounding_sphere_radius": 6.0,
+    "tolerance": 0.15,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -39,8 +40,8 @@
         ]
       },
       "scale": [
-        2.2,
-        4.2
+        3.8,
+        6.5
       ],
       "upright": true
     },
@@ -71,6 +72,7 @@
     "count": 260,
     "seed": 739,
     "bounding_sphere_radius": 8.0,
+    "tolerance": 0.15,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -102,8 +104,8 @@
         ]
       },
       "scale": [
-        1.4,
-        2.8
+        2.6,
+        4.8
       ],
       "upright": true
     },
@@ -134,6 +136,7 @@
     "count": 180,
     "seed": 911,
     "bounding_sphere_radius": 9.0,
+    "tolerance": 0.12,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -165,8 +168,8 @@
         ]
       },
       "scale": [
-        0.9,
-        1.5
+        1.8,
+        2.8
       ],
       "upright": true
     },
@@ -197,6 +200,7 @@
     "count": 200,
     "seed": 922,
     "bounding_sphere_radius": 7.0,
+    "tolerance": 0.15,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -228,8 +232,8 @@
         ]
       },
       "scale": [
-        1.1,
-        1.7
+        1.8,
+        3.0
       ],
       "upright": true
     },
@@ -260,6 +264,7 @@
     "count": 700,
     "seed": 1101,
     "bounding_sphere_radius": 0.65,
+    "tolerance": 0.85,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "rotation": {
@@ -301,6 +306,7 @@
     "count": 700,
     "seed": 1102,
     "bounding_sphere_radius": 0.45,
+    "tolerance": 0.85,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "rotation": {
@@ -339,9 +345,10 @@
     "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 320,
+    "count": 1200,
     "seed": 1201,
     "bounding_sphere_radius": 2.9,
+    "tolerance": 0.82,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "rotation": {
@@ -351,8 +358,8 @@
         ]
       },
       "scale": [
-        0.5,
-        1.65
+        0.35,
+        0.70
       ],
       "upright": true
     },
@@ -380,9 +387,10 @@
     "target_surface_node": "ENV_Road_Asphalt_ClosedLoop",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 1200,
+    "count": 3200,
     "seed": 1301,
     "bounding_sphere_radius": 0.15,
+    "tolerance": 1.0,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "normal_offset": 0.006,
@@ -419,6 +427,7 @@
     "count": 550,
     "seed": 1401,
     "bounding_sphere_radius": 0.6,
+    "tolerance": 0.35,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "normal_offset": -0.03,
@@ -464,6 +473,7 @@
     "count": 140,
     "seed": 1402,
     "bounding_sphere_radius": 1.4,
+    "tolerance": 0.35,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "normal_offset": -0.08,
@@ -509,6 +519,7 @@
     "count": 45,
     "seed": 1403,
     "bounding_sphere_radius": 3.5,
+    "tolerance": 0.30,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "normal_offset": -0.22,

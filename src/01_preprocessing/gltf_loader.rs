@@ -80,6 +80,7 @@ pub struct ScatterLodConfig {
 }
 
 fn default_radius() -> f32 { 0.09 }
+fn default_tolerance() -> f32 { 1.0 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(untagged)]
@@ -236,6 +237,8 @@ pub struct ScatterRule {
     pub seed: u64,
     #[serde(default = "default_radius")]
     pub bounding_sphere_radius: f32,
+    #[serde(default = "default_tolerance", alias = "tolerance")]
+    pub clumping_tolerance: f32,
     #[serde(default)]
     pub cull_screen_coverage_percent: f32,
     #[serde(default)]
@@ -866,12 +869,14 @@ fn scatter_instances_on_surface(
     }
 
     let mut rng = LcgRng::new(rule.seed);
-    let mut instances = Vec::with_capacity(rule.count);
+    let mut instances: Vec<ScatterInstanceItem> = Vec::with_capacity(rule.count);
     let normal_transform = Mat4::from_mat3(Mat3::from_mat4(surface.world_transform).inverse().transpose());
     let tf = &rule.transform;
 
     let mut attempts = 0;
-    let max_attempts = rule.count * 10;
+    let max_attempts = rule.count * 30;
+    let cell_size = 5.0f32;
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
 
     while instances.len() < rule.count && attempts < max_attempts {
         attempts += 1;
@@ -963,11 +968,47 @@ fn scatter_instances_on_surface(
         );
 
         let world_radius = rule.bounding_sphere_radius * scale;
+
+        // Anti-clumping spatial clearance check considering plant scale and clumping tolerance
+        let tolerance = rule.clumping_tolerance.clamp(0.0, 1.0);
+        let spacing_factor = 1.0 - tolerance;
+        if spacing_factor > 1e-4 {
+            let mut clumped = false;
+            let cell_x = (offset_pos.x / cell_size).floor() as i32;
+            let cell_z = (offset_pos.z / cell_size).floor() as i32;
+            'check_clump: for dx in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(indices) = grid.get(&(cell_x + dx, cell_z + dz)) {
+                        for &idx in indices {
+                            let other = &instances[idx];
+                            let min_dist = (world_radius + other.world_radius) * spacing_factor * 0.04;
+                            let dist_sq = (offset_pos.x - other.position.x).powi(2)
+                                + (offset_pos.z - other.position.z).powi(2);
+                            if dist_sq < min_dist * min_dist {
+                                clumped = true;
+                                break 'check_clump;
+                            }
+                        }
+                    }
+                }
+            }
+            if clumped {
+                continue;
+            }
+        }
+
+        let idx = instances.len();
         instances.push(ScatterInstanceItem {
             transform: InstanceRaw::from_transform(model),
             position: offset_pos,
             world_radius,
         });
+
+        if spacing_factor > 1e-4 {
+            let cell_x = (offset_pos.x / cell_size).floor() as i32;
+            let cell_z = (offset_pos.z / cell_size).floor() as i32;
+            grid.entry((cell_x, cell_z)).or_default().push(idx);
+        }
     }
 
     instances

@@ -16,12 +16,25 @@ pub struct Config {
 // #region Scaffolding
 impl Config {
     fn create_default() -> Self {
-        Self {
-            target_fps: 60,
-            default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
-            default_env_map: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/autumn_forest_01_1k.png".to_string(),
-            max_texture_size: 4096,
-            scatter_config: Some("/sdcard/Android/data/org.antigravity.webgpurenderer/files/scatter.json".to_string()),
+        #[cfg(target_os = "android")]
+        {
+            Self {
+                target_fps: 60,
+                default_model: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/base_scene.glb".to_string(),
+                default_env_map: "/sdcard/Android/data/org.antigravity.webgpurenderer/files/autumn_forest_01_1k.png".to_string(),
+                max_texture_size: 4096,
+                scatter_config: Some("/sdcard/Android/data/org.antigravity.webgpurenderer/files/scatter.json".to_string()),
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Self {
+                target_fps: 60,
+                default_model: "gltf/base_scene.glb".to_string(),
+                default_env_map: "Model/textures/autumn_forest_01_1k.png".to_string(),
+                max_texture_size: 4096,
+                scatter_config: Some("config/scatter.json".to_string()),
+            }
         }
     }
 }
@@ -54,6 +67,15 @@ mod tests {
         assert_eq!(config.target_fps, 60);
         assert_eq!(config.max_texture_size, 4096);
         assert!(!config.default_model.is_empty());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn test_desktop_config_paths() {
+        let config = Config::default();
+        assert_eq!(config.default_model, "gltf/base_scene.glb");
+        assert_eq!(config.default_env_map, "Model/textures/autumn_forest_01_1k.png");
+        assert_eq!(config.scatter_config.as_deref(), Some("config/scatter.json"));
     }
 }
 // #endregion

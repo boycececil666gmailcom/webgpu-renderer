@@ -5,7 +5,11 @@ edition = "2021"
 
 [lib]
 name = "webgpu_engine"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "webgpu-viewer"
+path = "src/main.rs"
 
 [dependencies]
 wgpu = { version = "23.0", features = ["wgsl"] }

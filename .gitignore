@@ -5,6 +5,12 @@ target/
 screen.png
 android/.tmp/
 android/logs/
+android/logs/*.png
+android/logs/*.jpg
+android/logs/*.log
+windows/logs/
+windows/logs/*.log
+bin/*.apk
 .env
 
 # Blender backup & cache files

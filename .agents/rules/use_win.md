@@ -1,0 +1,1 @@
+Prioritize windows as the testing platform instead of android
