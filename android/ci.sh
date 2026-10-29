@@ -173,21 +173,8 @@ deploy_app() {
         fi
     }
 
-    sync_file "$PROJECT_ROOT/gltf/base_scene.glb"
-    sync_file "$PROJECT_ROOT/gltf/leaves.glb"
-    sync_file "$PROJECT_ROOT/gltf/leaves_lod0.glb"
-    sync_file "$PROJECT_ROOT/gltf/leaves_lod1.glb"
-    sync_file "$PROJECT_ROOT/gltf/leaves_lod2.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod0.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod1.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_maple_lod2.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod0.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod1.glb"
-    sync_file "$PROJECT_ROOT/gltf/tree_aspen_lod2.glb"
-    for plant in fern_01 fern_02 bush_01 bush_02 rock_01 rock_02 rock_03; do
-        for lod in 0 1 2 3; do
-            sync_file "$PROJECT_ROOT/gltf/${plant}_lod${lod}.glb"
-        done
+    for glb in "$PROJECT_ROOT"/gltf/*.glb; do
+        [ -f "$glb" ] && sync_file "$glb"
     done
     sync_file "$PROJECT_ROOT/config/scatter.json"
     sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
