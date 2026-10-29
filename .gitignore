@@ -3,6 +3,7 @@ target/
 *.pdb
 .env.local
 screen.png
+current_render.png
 android/.tmp/
 android/logs/
 android/logs/*.png

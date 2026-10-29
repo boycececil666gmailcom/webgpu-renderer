@@ -96,12 +96,12 @@ mod tests {
 
     #[test]
     fn test_parse_args_with_model() {
-        let args = vec!["webgpu-viewer".to_string(), "gltf/tree_01_lod1.glb".to_string()];
+        let args = vec!["webgpu-viewer".to_string(), "gltf/tree_01.glb".to_string()];
         let cmd = parse_args(&args);
         assert_eq!(
             cmd,
             ViewerCommand::Run {
-                model_path: Some("gltf/tree_01_lod1.glb".to_string())
+                model_path: Some("gltf/tree_01.glb".to_string())
             }
         );
     }

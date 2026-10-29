@@ -39,15 +39,15 @@ Launches the viewer in a dedicated foreground desktop window while immediately r
 ### 3. Preview a Specific glTF Model
 Passes a custom model path to the viewer (validates path existence before opening the window):
 ```bash
-./windows/run.sh -m gltf/tree_01_lod1.glb
+./windows/run.sh -m gltf/tree_01.glb
 # Or directly:
-./windows/run.sh gltf/tree_01_lod1.glb
+./windows/run.sh gltf/tree_01.glb
 ```
 
 ### 4. Launch in Release Mode
 Runs with full compiler optimizations:
 ```bash
-./windows/run.sh --release -m gltf/tree_01_lod1.glb
+./windows/run.sh --release -m gltf/tree_01.glb
 ```
 
 ### 5. Build Desktop Binary Only

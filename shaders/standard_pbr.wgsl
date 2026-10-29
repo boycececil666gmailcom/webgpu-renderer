@@ -79,7 +79,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     var base_color = mat.base_color;
     if (mat.use_texture == 1u) {
         base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
@@ -98,7 +98,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return base_color;
     }
 
-    let norm = normalize(in.normal);
+    var norm = normalize(in.normal);
+    if (!is_front) {
+        norm = -norm;
+    }
     let view_dir = normalize(frame.cam_pos.xyz - in.world_pos);
     let light_dir = normalize(frame.light_dir.xyz);
     let radiance = frame.light_color.rgb * frame.light_color.a;

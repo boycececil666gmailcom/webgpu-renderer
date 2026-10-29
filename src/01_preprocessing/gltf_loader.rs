@@ -74,7 +74,10 @@ fn default_component() -> String { "R".to_string() }
 pub struct ScatterLodConfig {
     #[serde(default)]
     pub lod_level: u32,
+    #[serde(default)]
     pub prototype_asset: String,
+    #[serde(default)]
+    pub node_name: Option<String>,
     #[serde(default)]
     pub min_screen_coverage_percent: f32,
 }
@@ -228,6 +231,8 @@ pub struct ScatterRule {
     pub enabled: bool,
     #[serde(default)]
     pub prototype_asset: Option<String>,
+    #[serde(default, alias = "master_asset")]
+    pub asset: Option<String>,
     pub target_surface_node: String,
     #[serde(default = "default_channel")]
     pub weight_channel: u32,
@@ -371,7 +376,7 @@ impl GltfScene {
     }
 
     fn create_texture_view(device: &wgpu::Device, queue: &wgpu::Queue, data: &TextureData) -> wgpu::TextureView {
-        let mip_level_count = 32 - data.width.max(data.height).leading_zeros();
+        let mip_level_count = (32 - data.width.max(data.height).leading_zeros()).min(8);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Material Texture"),
             size: wgpu::Extent3d {
@@ -414,7 +419,12 @@ impl GltfScene {
 
             if mip_level + 1 < mip_level_count {
                 let next = ((width / 2).max(1), (height / 2).max(1));
-                level = image::imageops::resize(&level, next.0, next.1, image::imageops::FilterType::Triangle);
+                let filter = if mip_level < 2 {
+                    image::imageops::FilterType::Triangle
+                } else {
+                    image::imageops::FilterType::Nearest
+                };
+                level = image::imageops::resize(&level, next.0, next.1, filter);
             }
         }
 
@@ -974,6 +984,21 @@ fn scatter_instances_on_surface(
             pos + tangent * pos_x + norm * pos_y + bitangent * pos_z
         };
 
+        if surface.name.contains("Terrain") {
+            let r_horiz = (offset_pos.x * offset_pos.x + offset_pos.z * offset_pos.z).sqrt();
+            if r_horiz >= 39.3 && r_horiz <= 48.7 {
+                continue;
+            }
+        }
+
+        if rule.name.to_lowercase().contains("tree") {
+            let cam_pos = Vec3::new(-49.7086, 1.2886, -11.5965);
+            let dist_to_cam = (offset_pos - cam_pos).length();
+            if dist_to_cam < 5.0 {
+                continue;
+            }
+        }
+
         let model = Mat4::from_cols(
             (rot_tangent * scale).extend(0.0),
             (rot_norm * scale).extend(0.0),
@@ -1028,9 +1053,16 @@ fn scatter_instances_on_surface(
     instances
 }
 
+#[derive(Clone, Debug)]
+struct PrototypeContainer {
+    mesh_indices_by_name: HashMap<String, usize>,
+    mesh_indices: Vec<usize>,
+}
+
 impl GltfScene {
-    fn load_prototype_asset(
+    fn load_prototype_container(
         path: &Path,
+        asset_cache: &mut HashMap<PathBuf, PrototypeContainer>,
         materials: &mut Vec<Material>,
         primitives_by_mesh: &mut Vec<Vec<GpuPrimitive>>,
         device: &wgpu::Device,
@@ -1039,7 +1071,12 @@ impl GltfScene {
         default_view: &wgpu::TextureView,
         default_sampler: &wgpu::Sampler,
         max_texture_size: u32,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
+    ) -> Result<PrototypeContainer, Box<dyn std::error::Error>> {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if let Some(cached) = asset_cache.get(&canonical) {
+            return Ok(cached.clone());
+        }
+
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
@@ -1048,10 +1085,64 @@ impl GltfScene {
         let mut new_materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
         materials.append(&mut new_materials);
 
+        let base_mesh_idx = primitives_by_mesh.len();
         let (mut new_prims, _, _) = Self::build_primitives(&gltf.document, &buffers, mat_offset, materials.len(), device);
-        let proto_mesh_idx = primitives_by_mesh.len();
+        let num_meshes = new_prims.len();
         primitives_by_mesh.append(&mut new_prims);
-        Ok(proto_mesh_idx)
+
+        let mut mesh_indices = Vec::with_capacity(num_meshes);
+        let mut mesh_indices_by_name = HashMap::new();
+
+        for i in 0..num_meshes {
+            mesh_indices.push(base_mesh_idx + i);
+        }
+
+        for mesh in gltf.document.meshes() {
+            let global_idx = base_mesh_idx + mesh.index();
+            if let Some(name) = mesh.name() {
+                mesh_indices_by_name.insert(name.to_string(), global_idx);
+                mesh_indices_by_name.insert(name.to_lowercase(), global_idx);
+            }
+        }
+
+        for node in gltf.document.nodes() {
+            if let Some(mesh) = node.mesh() {
+                let global_idx = base_mesh_idx + mesh.index();
+                if let Some(name) = node.name() {
+                    mesh_indices_by_name.insert(name.to_string(), global_idx);
+                    mesh_indices_by_name.insert(name.to_lowercase(), global_idx);
+                }
+            }
+        }
+
+        let container = PrototypeContainer {
+            mesh_indices_by_name,
+            mesh_indices,
+        };
+
+        crate::telemetry::log_info(
+            "GltfLoader",
+            "Cache",
+            &format!("Cached prototype '{}' ({} meshes, {} textures)", path.display(), num_meshes, textures.len()),
+        );
+
+        asset_cache.insert(canonical, container.clone());
+        Ok(container)
+    }
+
+    fn resolve_prototype_path(asset_str: &str, base_dir: &Path) -> PathBuf {
+        let p = Path::new(asset_str);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else if p.exists() {
+            p.to_path_buf()
+        } else if base_dir.join(p).exists() {
+            base_dir.join(p)
+        } else if let Some(file_name) = p.file_name() {
+            base_dir.join(file_name)
+        } else {
+            base_dir.join(p)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1093,6 +1184,8 @@ impl GltfScene {
             }
         };
 
+        let mut asset_cache: HashMap<PathBuf, PrototypeContainer> = HashMap::new();
+
         for rule in rules {
             if !rule.enabled {
                 continue;
@@ -1115,18 +1208,62 @@ impl GltfScene {
             if !rule.lods.is_empty() {
                 let mut lod_levels = Vec::new();
                 for lod_cfg in &rule.lods {
-                    let proto_path = if Path::new(&lod_cfg.prototype_asset).is_absolute() {
-                        PathBuf::from(&lod_cfg.prototype_asset)
+                    let raw_asset_str = if !lod_cfg.prototype_asset.is_empty() {
+                        &lod_cfg.prototype_asset
+                    } else if let Some(ref a) = rule.asset {
+                        a.as_str()
+                    } else if let Some(ref p) = rule.prototype_asset {
+                        p.as_str()
                     } else {
-                        base_dir.join(&lod_cfg.prototype_asset)
+                        continue;
                     };
+
+                    let (asset_filename, fragment_node) = match raw_asset_str.split_once('#') {
+                        Some((file, frag)) => (file, Some(frag.to_string())),
+                        None => (raw_asset_str, None),
+                    };
+
+                    let proto_path = Self::resolve_prototype_path(asset_filename, base_dir);
+
                     if !proto_path.exists() {
                         crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("LOD prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
                         continue;
                     }
 
-                    match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
-                        Ok(proto_mesh_idx) => {
+                    match Self::load_prototype_container(
+                        &proto_path,
+                        &mut asset_cache,
+                        materials,
+                        primitives_by_mesh,
+                        device,
+                        queue,
+                        bgl_mat,
+                        default_view,
+                        default_sampler,
+                        max_texture_size,
+                    ) {
+                        Ok(container) => {
+                            let target_node = lod_cfg.node_name.as_ref().or(fragment_node.as_ref());
+                            let proto_mesh_idx = if let Some(name) = target_node {
+                                container.mesh_indices_by_name.get(name)
+                                    .or_else(|| container.mesh_indices_by_name.get(&name.to_lowercase()))
+                                    .copied()
+                                    .or_else(|| {
+                                        let lower = name.to_lowercase();
+                                        container.mesh_indices_by_name.iter()
+                                            .find(|(k, _)| k.contains(&lower) || lower.contains(k.as_str()))
+                                            .map(|(_, &v)| v)
+                                    })
+                                    .unwrap_or(container.mesh_indices[0])
+                            } else {
+                                let idx_candidate = lod_cfg.lod_level as usize;
+                                if idx_candidate < container.mesh_indices.len() {
+                                    container.mesh_indices[idx_candidate]
+                                } else {
+                                    container.mesh_indices[0]
+                                }
+                            };
+
                             let max_byte_size = (total_count * std::mem::size_of::<InstanceRaw>()) as u64;
                             let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some(&format!("{}_LOD{}_Instances", rule.name, lod_cfg.lod_level)),
@@ -1172,18 +1309,26 @@ impl GltfScene {
                     last_eval_cam: None,
                 });
             } else if let Some(ref proto) = rule.prototype_asset {
-                let proto_path = if Path::new(proto).is_absolute() {
-                    PathBuf::from(proto)
-                } else {
-                    base_dir.join(proto)
-                };
+                let proto_path = Self::resolve_prototype_path(proto, base_dir);
                 if !proto_path.exists() {
                     crate::telemetry::log_warn("GltfLoader", "Scatter", &format!("Prototype asset '{}' not found for rule '{}'", proto_path.display(), rule.name));
                     continue;
                 }
 
-                match Self::load_prototype_asset(&proto_path, materials, primitives_by_mesh, device, queue, bgl_mat, default_view, default_sampler, max_texture_size) {
-                    Ok(proto_mesh_idx) => {
+                match Self::load_prototype_container(
+                    &proto_path,
+                    &mut asset_cache,
+                    materials,
+                    primitives_by_mesh,
+                    device,
+                    queue,
+                    bgl_mat,
+                    default_view,
+                    default_sampler,
+                    max_texture_size,
+                ) {
+                    Ok(container) => {
+                        let proto_mesh_idx = container.mesh_indices[0];
                         let raw_transforms: Vec<InstanceRaw> = instances.iter().map(|it| it.transform).collect();
                         let instance_buffer = Self::create_buffer(
                             device,

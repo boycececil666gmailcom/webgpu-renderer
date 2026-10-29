@@ -79,12 +79,10 @@ def subdivide_road_mesh(obj: bpy.types.Object, config: RoadSubdivisionConfig) ->
 def evaluate_leaf_density(world_pos: Vector, config: WeightPaintingConfig) -> float:
     r = world_pos.xy.length
     theta = math.atan2(world_pos.y, world_pos.x)
-    # Full coverage across entire road width (40.0m to 48.0m) with natural organic drift
-    noise = 0.5 + 0.3 * math.sin(6.0 * theta) * math.cos(4.0 * r) + 0.2 * math.sin(15.0 * theta + 2.0 * r)
-    norm_r = min(max((r - 40.0) / 8.0, 0.0), 1.0)
-    edge_factor = 1.0 - 4.0 * norm_r * (1.0 - norm_r) # 1.0 at edges, 0.0 at center
-    base_weight = 0.70 + 0.15 * edge_factor + 0.15 * noise
-    return float(min(max(base_weight, 0.55), 1.0))
+    # Pure uniform coverage across full road width with organic turbulence, zero edge bias
+    noise = 0.5 + 0.3 * math.sin(8.0 * theta) * math.cos(5.0 * r) + 0.2 * math.sin(18.0 * theta + 3.0 * r)
+    base_weight = 0.88 + 0.10 * noise
+    return float(min(max(base_weight, 0.75), 1.0))
 
 def author_road_vertex_weights_and_colors(obj: bpy.types.Object, config: WeightPaintingConfig) -> int:
     mesh = obj.data

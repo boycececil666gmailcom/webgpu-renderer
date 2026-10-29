@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./windows/run.sh"
             echo "  ./windows/run.sh -d"
             echo "  ./windows/run.sh --release"
-            echo "  ./windows/run.sh -m gltf/tree_01_lod1.glb"
+            echo "  ./windows/run.sh -m gltf/tree_01.glb"
             echo "  ./windows/run.sh -t"
             exit 0
             ;;
@@ -141,12 +141,19 @@ launch_viewer() {
     fi
 
     cd "$PROJECT_ROOT"
+    local bin_path="target/${BUILD_PROFILE}/webgpu-viewer.exe"
+    if [[ ! -f "$bin_path" ]]; then
+        build_binary
+    fi
+
     if [[ "$DETACH" == true ]]; then
         log "INFO" "Spawning WebGPU viewer in independent foreground window..."
+        local win_bin
+        win_bin=$(cygpath -w "$PROJECT_ROOT/$bin_path" 2>/dev/null || echo "$bin_path")
         if [[ ${#run_args[@]} -gt 0 ]]; then
-            cmd.exe /c start "" "$CARGO_BIN" "${flags[@]}" -- "${run_args[@]}"
+            cmd.exe /c start "" "$win_bin" "${run_args[@]}"
         else
-            cmd.exe /c start "" "$CARGO_BIN" "${flags[@]}"
+            cmd.exe /c start "" "$win_bin"
         fi
         log "INFO" "Foreground window launched successfully. Terminal released."
     elif [[ ${#run_args[@]} -gt 0 ]]; then
