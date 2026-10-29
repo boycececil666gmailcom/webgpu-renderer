@@ -5,9 +5,9 @@
     "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 540,
+    "count": 420,
     "seed": 421,
-    "bounding_sphere_radius": 1.9,
+    "bounding_sphere_radius": 6.0,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -39,8 +39,8 @@
         ]
       },
       "scale": [
-        0.85,
-        2.4
+        2.2,
+        4.2
       ],
       "upright": true
     },
@@ -48,12 +48,12 @@
       {
         "lod_level": 0,
         "prototype_asset": "tree_maple_lod0.glb",
-        "min_screen_coverage_percent": 0.15
+        "min_screen_coverage_percent": 0.18
       },
       {
         "lod_level": 1,
         "prototype_asset": "tree_maple_lod1.glb",
-        "min_screen_coverage_percent": 0.03
+        "min_screen_coverage_percent": 0.035
       },
       {
         "lod_level": 2,
@@ -68,9 +68,9 @@
     "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 390,
+    "count": 320,
     "seed": 739,
-    "bounding_sphere_radius": 3.8,
+    "bounding_sphere_radius": 8.0,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "position": {
@@ -102,8 +102,8 @@
         ]
       },
       "scale": [
-        0.8,
-        1.9
+        1.4,
+        2.8
       ],
       "upright": true
     },
@@ -111,12 +111,12 @@
       {
         "lod_level": 0,
         "prototype_asset": "tree_aspen_lod0.glb",
-        "min_screen_coverage_percent": 0.15
+        "min_screen_coverage_percent": 0.18
       },
       {
         "lod_level": 1,
         "prototype_asset": "tree_aspen_lod1.glb",
-        "min_screen_coverage_percent": 0.03
+        "min_screen_coverage_percent": 0.035
       },
       {
         "lod_level": 2,
