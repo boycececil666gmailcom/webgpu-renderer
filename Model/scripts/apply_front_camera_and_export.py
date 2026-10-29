@@ -12,9 +12,10 @@ class SceneConfig:
     BLEND_PATH = os.path.join(PROJECT_ROOT, "Model", "asset.blend")
     GLB_PATH = os.path.join(PROJECT_ROOT, "gltf", "base_scene.glb")
     
-    # Camera front-facing hero shot coordinates
-    CAM_LOC = Vector((-22.0, -12.0, 5.5))
-    CAM_TARGET = Vector((-12.0, 0.0, 1.1))
+    # Camera low-angle hero shot coordinates revealing canopy
+    CAM_LOC = Vector((-50.6841, 10.8906, 1.35))
+    CAM_TARGET = Vector((-44.4, 2.23, 1.15))
+    PITCH_OFFSET_DEG = 2.5
     
     ENV_OBJECTS = [
         "ENV_Road_Asphalt_ClosedLoop",
@@ -46,16 +47,19 @@ def configure_camera():
     # Set position
     cam_obj.location = SceneConfig.CAM_LOC
 
-    # Point directly at the front of the car
-    direction = SceneConfig.CAM_TARGET - SceneConfig.CAM_LOC
+    # Point at the car with upward pitch offset to capture canopy
+    direction = (SceneConfig.CAM_TARGET - SceneConfig.CAM_LOC).normalized()
     rot_quat = direction.to_track_quat('-Z', 'Y')
-    cam_obj.rotation_euler = rot_quat.to_euler()
+    rot_mat = rot_quat.to_matrix().to_4x4()
+    from mathutils import Matrix
+    pitch_mat = Matrix.Rotation(math.radians(SceneConfig.PITCH_OFFSET_DEG), 4, 'X')
+    cam_obj.rotation_euler = (rot_mat @ pitch_mat).to_euler()
 
     cam_data = cam_obj.data
-    cam_data.lens = 56.0
+    cam_data.lens = 30.0
     cam_data.sensor_width = 36.0
     cam_data.clip_start = 0.1
-    cam_data.clip_end = 250.0
+    cam_data.clip_end = 300.0
 
     bpy.context.view_layer.update()
     log_step(f"Camera placed at {cam_obj.location}, rot_deg={[round(math.degrees(a), 2) for a in cam_obj.rotation_euler]}")
