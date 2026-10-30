@@ -415,10 +415,10 @@
     "target_surface_node": "ENV_Road_Asphalt_ClosedLoop",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 16000,
+    "count": 1000,
     "seed": 1301,
     "bounding_sphere_radius": 0.15,
-    "tolerance": 1.0,
+    "tolerance": 0.85,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "normal_offset": 0.008,
@@ -429,8 +429,8 @@
         ]
       },
       "scale": [
-        1.6,
-        3.6
+        0.55,
+        1.8
       ]
     },
     "lods": [
