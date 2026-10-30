@@ -297,10 +297,16 @@ pub struct GltfScene {
     pub scatter_groups: Vec<ScatterLodGroup>,
 }
 
-struct TextureData {
-    rgba: Vec<u8>,
+struct MipLevel {
     width: u32,
     height: u32,
+    rgba: Vec<u8>,
+}
+
+struct TextureData {
+    width: u32,
+    height: u32,
+    mips: Vec<MipLevel>,
 }
 // #endregion
 
@@ -328,6 +334,90 @@ impl GltfScene {
         })
     }
 
+    fn fnv1a_64(bytes: &[u8]) -> u64 {
+        let mut h = 0xcbf29ce484222325u64;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    fn try_load_baked_mips(cache_path: &Path) -> Option<TextureData> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(cache_path).ok()?;
+        let mut header = [0u8; 16];
+        file.read_exact(&mut header).ok()?;
+        if &header[0..4] != b"MIP0" {
+            return None;
+        }
+        let base_width = u32::from_le_bytes(header[4..8].try_into().ok()?);
+        let base_height = u32::from_le_bytes(header[8..12].try_into().ok()?);
+        let mip_count = u32::from_le_bytes(header[12..16].try_into().ok()?);
+
+        let mut mips = Vec::with_capacity(mip_count as usize);
+        let mut meta = [0u8; 12];
+        for _ in 0..mip_count {
+            file.read_exact(&mut meta).ok()?;
+            let mw = u32::from_le_bytes(meta[0..4].try_into().ok()?);
+            let mh = u32::from_le_bytes(meta[4..8].try_into().ok()?);
+            let byte_len = u32::from_le_bytes(meta[8..12].try_into().ok()?);
+            let mut rgba = vec![0u8; byte_len as usize];
+            file.read_exact(&mut rgba).ok()?;
+            mips.push(MipLevel { width: mw, height: mh, rgba });
+        }
+
+        Some(TextureData { width: base_width, height: base_height, mips })
+    }
+
+    fn save_baked_mips(cache_path: &Path, data: &TextureData) {
+        use std::io::Write;
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut file) = std::fs::File::create(cache_path) {
+            let _ = file.write_all(b"MIP0");
+            let _ = file.write_all(&data.width.to_le_bytes());
+            let _ = file.write_all(&data.height.to_le_bytes());
+            let _ = file.write_all(&(data.mips.len() as u32).to_le_bytes());
+            for mip in &data.mips {
+                let _ = file.write_all(&mip.width.to_le_bytes());
+                let _ = file.write_all(&mip.height.to_le_bytes());
+                let _ = file.write_all(&(mip.rgba.len() as u32).to_le_bytes());
+                let _ = file.write_all(&mip.rgba);
+            }
+        }
+    }
+
+    fn generate_mips_from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> TextureData {
+        let mip_level_count = (32 - width.max(height).leading_zeros()).min(8);
+        let mut mips = Vec::with_capacity(mip_level_count as usize);
+
+        let mut level = image::RgbaImage::from_raw(width, height, rgba)
+            .expect("valid RGBA texture dimensions");
+
+        for mip_level in 0..mip_level_count {
+            let (w, h) = level.dimensions();
+            mips.push(MipLevel {
+                width: w,
+                height: h,
+                rgba: level.as_raw().clone(),
+            });
+
+            if mip_level + 1 < mip_level_count {
+                let next = ((w / 2).max(1), (h / 2).max(1));
+                let filter = if mip_level < 2 {
+                    image::imageops::FilterType::Triangle
+                } else {
+                    image::imageops::FilterType::Nearest
+                };
+                level = image::imageops::resize(&level, next.0, next.1, filter);
+            }
+        }
+
+        TextureData { width, height, mips }
+    }
+
     fn downsample_image(img: image::DynamicImage, max_size: u32) -> (Vec<u8>, u32, u32) {
         let (w, h) = img.dimensions();
         let scaled = if w > max_size || h > max_size {
@@ -346,20 +436,43 @@ impl GltfScene {
     }
 
     fn decode_image_data(source: &gltf::image::Source, base_path: Option<&Path>, buffers: &[gltf::buffer::Data], max_size: u32) -> Option<TextureData> {
+        let cache_dir = base_path.unwrap_or_else(|| Path::new(".")).join("cache");
         match source {
             gltf::image::Source::View { view, .. } => {
                 let start = view.offset();
                 let end = start + view.length();
-                let data = &buffers[view.buffer().index()][start..end];
-                let decoded = image::load_from_memory(data).ok()?;
+                let raw_bytes = &buffers[view.buffer().index()][start..end];
+                let hash = Self::fnv1a_64(raw_bytes);
+                let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
+                if let Some(baked) = Self::try_load_baked_mips(&cache_file) {
+                    return Some(baked);
+                }
+
+                let decoded = image::load_from_memory(raw_bytes).ok()?;
                 let (rgba, width, height) = Self::downsample_image(decoded, max_size);
-                Some(TextureData { rgba, width, height })
+                let tex = Self::generate_mips_from_rgba(rgba, width, height);
+                Self::save_baked_mips(&cache_file, &tex);
+                Some(tex)
             }
             gltf::image::Source::Uri { uri, .. } => {
                 let path = base_path.unwrap_or_else(|| Path::new(".")).join(uri);
+                if let Ok(raw_bytes) = std::fs::read(&path) {
+                    let hash = Self::fnv1a_64(&raw_bytes);
+                    let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
+                    if let Some(baked) = Self::try_load_baked_mips(&cache_file) {
+                        return Some(baked);
+                    }
+                }
+
                 let decoded = image::open(&path).ok()?;
                 let (rgba, width, height) = Self::downsample_image(decoded, max_size);
-                Some(TextureData { rgba, width, height })
+                let tex = Self::generate_mips_from_rgba(rgba, width, height);
+                if let Ok(raw_bytes) = std::fs::read(&path) {
+                    let hash = Self::fnv1a_64(&raw_bytes);
+                    let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
+                    Self::save_baked_mips(&cache_file, &tex);
+                }
+                Some(tex)
             }
         }
     }
@@ -376,7 +489,6 @@ impl GltfScene {
     }
 
     fn create_texture_view(device: &wgpu::Device, queue: &wgpu::Queue, data: &TextureData) -> wgpu::TextureView {
-        let mip_level_count = (32 - data.width.max(data.height).leading_zeros()).min(8);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Material Texture"),
             size: wgpu::Extent3d {
@@ -384,7 +496,7 @@ impl GltfScene {
                 height: data.height,
                 depth_or_array_layers: 1,
             },
-            mip_level_count,
+            mip_level_count: data.mips.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -392,40 +504,26 @@ impl GltfScene {
             view_formats: &[],
         });
 
-        let mut level = image::RgbaImage::from_raw(data.width, data.height, data.rgba.clone())
-            .expect("valid RGBA texture dimensions");
-
-        for mip_level in 0..mip_level_count {
-            let (width, height) = level.dimensions();
+        for (mip_level, mip) in data.mips.iter().enumerate() {
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &texture,
-                    mip_level,
+                    mip_level: mip_level as u32,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                level.as_raw(),
+                &mip.rgba,
                 wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(4 * width),
-                    rows_per_image: Some(height),
+                    bytes_per_row: Some(4 * mip.width),
+                    rows_per_image: Some(mip.height),
                 },
                 wgpu::Extent3d {
-                    width,
-                    height,
+                    width: mip.width,
+                    height: mip.height,
                     depth_or_array_layers: 1,
                 },
             );
-
-            if mip_level + 1 < mip_level_count {
-                let next = ((width / 2).max(1), (height / 2).max(1));
-                let filter = if mip_level < 2 {
-                    image::imageops::FilterType::Triangle
-                } else {
-                    image::imageops::FilterType::Nearest
-                };
-                level = image::imageops::resize(&level, next.0, next.1, filter);
-            }
         }
 
         texture.create_view(&wgpu::TextureViewDescriptor::default())

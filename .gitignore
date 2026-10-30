@@ -30,6 +30,7 @@ Model/assets/
 Model/*.png0001.png
 gltf/base_scene.glb
 gltf/test_terrain*.glb
+gltf/cache/
 
 # Transient test artifacts and agent cache
 .kilo/

@@ -124,3 +124,4 @@ if __name__ == "__main__":
     root = os.path.abspath(os.path.join(blend_dir, ".."))
     export_all_consolidated_assets(root)
 #endregion
+

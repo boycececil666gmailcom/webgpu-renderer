@@ -40,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             BUILD_PROFILE="debug"
             shift
             ;;
+        -k|--bake)
+            MODE="bake"
+            shift
+            ;;
         -m|--model)
             MODEL_PATH="$2"
             shift 2
@@ -51,6 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -r, --run        Run the desktop WebGPU viewer in foreground (default)"
             echo "  -d, --detach     Spawn independent foreground window & free terminal"
             echo "  -b, --build      Build the desktop binary only"
+            echo "  -k, --bake       Pre-bake texture mipmaps into binary cache"
             echo "  -t, --test       Run host unit & integration tests"
             echo "  --release        Build/run in release mode"
             echo "  --debug          Build/run in debug mode (default)"
@@ -162,12 +167,21 @@ launch_viewer() {
         "$CARGO_BIN" "${flags[@]}" 2>&1 | tee -a "$RUN_LOG"
     fi
 }
+bake_textures() {
+    log "INFO" "Baking offline texture mipmaps into binary cache..."
+    cd "$PROJECT_ROOT"
+    python Model/scripts/bake_texture_mipmaps.py 2>&1 | tee -a "$RUN_LOG"
+}
+
 #endregion
 
 #region Main
 case "$MODE" in
     build)
         build_binary
+        ;;
+    bake)
+        bake_textures
         ;;
     test)
         run_tests
