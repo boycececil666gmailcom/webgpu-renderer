@@ -146,3 +146,4 @@ if __name__ == "__main__":
     project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
     run_baking_pipeline(project_root)
 #endregion
+
