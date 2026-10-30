@@ -112,15 +112,20 @@ def process_external_image(img_path: str, cache_dir: str) -> bool:
 
 #region Core
 def run_baking_pipeline(root_dir: str):
-    gltf_dir = os.path.join(root_dir, "gltf")
-    cache_dir = os.path.join(gltf_dir, "cache")
+    models_dir = os.path.join(root_dir, "assets", "models")
+    cache_dir = os.path.join(root_dir, "assets", "cache")
     os.makedirs(cache_dir, exist_ok=True)
 
-    print(f"[BAKE-MIPS] Scanning GLB files in {gltf_dir}...")
+    print(f"[BAKE-MIPS] Scanning GLB files in {models_dir}...")
     total_baked = 0
     total_skipped = 0
 
-    for glb_file in sorted(glob.glob(os.path.join(gltf_dir, "*.glb"))):
+    glb_files = sorted(glob.glob(os.path.join(models_dir, "*.glb")))
+    if not glb_files:
+        # Fallback to assets/ root if not in models/
+        glb_files = sorted(glob.glob(os.path.join(root_dir, "assets", "*.glb")))
+
+    for glb_file in glb_files:
         name = os.path.basename(glb_file)
         baked, skipped = process_glb_file(glb_file, cache_dir)
         total_baked += baked
@@ -128,7 +133,7 @@ def run_baking_pipeline(root_dir: str):
         print(f"  - {name}: {baked} baked, {skipped} already cached")
 
     # External textures
-    ext_tex = os.path.join(root_dir, "Model", "textures", "autumn_forest_01_1k.png")
+    ext_tex = os.path.join(root_dir, "assets", "textures", "autumn_forest_01_1k.png")
     if os.path.isfile(ext_tex):
         if process_external_image(ext_tex, cache_dir):
             total_baked += 1

@@ -30,8 +30,8 @@ impl Config {
         {
             Self {
                 target_fps: 60,
-                default_model: "gltf/base_scene.glb".to_string(),
-                default_env_map: "Model/textures/autumn_forest_01_1k.png".to_string(),
+                default_model: "assets/models/base_scene.glb".to_string(),
+                default_env_map: "assets/textures/autumn_forest_01_1k.png".to_string(),
                 max_texture_size: 4096,
                 scatter_config: Some("config/scatter.json".to_string()),
             }
@@ -73,8 +73,8 @@ mod tests {
     #[cfg(not(target_os = "android"))]
     fn test_desktop_config_paths() {
         let config = Config::default();
-        assert_eq!(config.default_model, "gltf/base_scene.glb");
-        assert_eq!(config.default_env_map, "Model/textures/autumn_forest_01_1k.png");
+        assert_eq!(config.default_model, "assets/models/base_scene.glb");
+        assert_eq!(config.default_env_map, "assets/textures/autumn_forest_01_1k.png");
         assert_eq!(config.scatter_config.as_deref(), Some("config/scatter.json"));
     }
 }

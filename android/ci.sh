@@ -173,11 +173,11 @@ deploy_app() {
         fi
     }
 
-    for glb in "$PROJECT_ROOT"/gltf/*.glb; do
+    for glb in "$PROJECT_ROOT"/assets/models/*.glb; do
         [ -f "$glb" ] && sync_file "$glb"
     done
     sync_file "$PROJECT_ROOT/config/scatter.json"
-    sync_file "$PROJECT_ROOT/Model/textures/autumn_forest_01_1k.png"
+    sync_file "$PROJECT_ROOT/assets/textures/autumn_forest_01_1k.png"
 }
 
 stream_telemetry() {

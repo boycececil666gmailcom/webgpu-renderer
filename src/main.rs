@@ -33,7 +33,7 @@ pub fn apply_command_to_config(mut config: Config, cmd: &ViewerCommand) -> Confi
 fn print_usage() {
     println!("WebGPU Desktop Viewer");
     println!("Usage: webgpu-viewer [MODEL_PATH.glb]");
-    println!("  <MODEL_PATH>  Optional path to glTF/GLB model (defaults to gltf/base_scene.glb)");
+    println!("  <MODEL_PATH>  Optional path to glTF/GLB model (defaults to assets/models/base_scene.glb)");
     println!("  -h, --help    Show this help message");
 }
 // #endregion
@@ -96,12 +96,12 @@ mod tests {
 
     #[test]
     fn test_parse_args_with_model() {
-        let args = vec!["webgpu-viewer".to_string(), "gltf/tree_01.glb".to_string()];
+        let args = vec!["webgpu-viewer".to_string(), "assets/models/tree_01.glb".to_string()];
         let cmd = parse_args(&args);
         assert_eq!(
             cmd,
             ViewerCommand::Run {
-                model_path: Some("gltf/tree_01.glb".to_string())
+                model_path: Some("assets/models/tree_01.glb".to_string())
             }
         );
     }

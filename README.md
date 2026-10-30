@@ -28,10 +28,11 @@ webgpu-renderer/
 │   ├── ci.ps1               # Automated end-to-end emulator CI pipeline
 │   ├── setup_emulator.ps1   # Provisions hardware-accelerated AVD
 │   └── run_emulator.ps1     # Boots Android emulator with Vulkan passthrough
-├── gltf/
-│   ├── base_scene.glb          # Default 3D scene (Lamborghini, closed road, layered terrain)
-│   ├── foliage_prototypes.glb  # Foliage prototype assets for GPU instancing
-│   └── foliage_manifest.json   # Foliage LOD metadata & scatter parameters
+├── assets/
+│   ├── models/              # Cooked 3D scene (base_scene.glb) & scatter prototypes (*.glb)
+│   ├── textures/            # Runtime environment panoramas & engine textures
+│   └── cache/               # Pre-baked binary mipmap streaming containers (*.mips)
+├── dcc/                     # Digital Content Creation workspace (Blender .blend, HDRIs, scripts)
 ├── shaders/
 │   └── shader.wgsl          # WebGPU WGSL vertex and fragment shader
 └── src/

@@ -5,8 +5,8 @@
       "path": "."
     },
     {
-      "name": "Model",
-      "path": "Model"
+      "name": "dcc",
+      "path": "dcc"
     }
   ],
   "settings": {

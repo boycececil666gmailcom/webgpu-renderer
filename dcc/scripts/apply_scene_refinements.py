@@ -159,7 +159,7 @@ def run():
             
     blend_dir = bpy.path.abspath("//")
     project_root = os.path.abspath(os.path.join(blend_dir, ".."))
-    glb_path = os.path.join(project_root, "gltf", "base_scene.glb")
+    glb_path = os.path.join(project_root, "assets", "models", "base_scene.glb")
     
     bpy.ops.export_scene.gltf(
         filepath=glb_path,

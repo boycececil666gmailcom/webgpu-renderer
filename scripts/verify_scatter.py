@@ -6,7 +6,7 @@ import struct
 
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 config_path = os.path.join(repo_root, "config", "scatter.json")
-glb_path = os.path.join(repo_root, "gltf", "base_scene.glb")
+glb_path = os.path.join(repo_root, "assets", "models", "base_scene.glb")
 
 print(f"=== 1. Validating Scatter Configuration: {config_path} ===")
 with open(config_path, "r", encoding="utf-8") as f:
@@ -20,7 +20,7 @@ for r in leaf_rules:
     assert r["enabled"] is True, "Leaf rule should be enabled"
     assert r["count"] > 0, "Leaf count should be > 0"
     for lod in r.get("lods", []):
-        proto_path = os.path.join(repo_root, "gltf", lod["prototype_asset"])
+        proto_path = os.path.join(repo_root, "assets", "models", lod["prototype_asset"])
         assert os.path.isfile(proto_path), f"Leaf prototype file not found: {proto_path}"
         print(f"    LOD{lod['lod_level']}: {lod['prototype_asset']} exists ({os.path.getsize(proto_path)} bytes)")
 

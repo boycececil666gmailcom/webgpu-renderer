@@ -108,11 +108,11 @@ def export_consolidated_group(glb_filename, obj_names, gltf_dir):
 
 #region Core
 def export_all_consolidated_assets(repo_root: str):
-    gltf_dir = os.path.join(repo_root, "gltf")
-    os.makedirs(gltf_dir, exist_ok=True)
+    models_dir = os.path.join(repo_root, "assets", "models")
+    os.makedirs(models_dir, exist_ok=True)
 
     for glb_filename, obj_names in ASSET_GROUPS.items():
-        export_consolidated_group(glb_filename, obj_names, gltf_dir)
+        export_consolidated_group(glb_filename, obj_names, models_dir)
 
     bpy.ops.wm.save_mainfile()
     log_info("Persisted asset.blend successfully.")

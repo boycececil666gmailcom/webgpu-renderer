@@ -19,11 +19,11 @@ def log_step(msg: str) -> None:
 #region Core
 def export_modular_assets() -> None:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    gltf_dir = os.path.join(project_root, "gltf")
-    os.makedirs(gltf_dir, exist_ok=True)
+    models_dir = os.path.join(project_root, "assets", "models")
+    os.makedirs(models_dir, exist_ok=True)
 
-    base_scene_glb = os.path.join(gltf_dir, "base_scene.glb")
-    leaves_glb = os.path.join(gltf_dir, "leaves.glb")
+    base_scene_glb = os.path.join(models_dir, "base_scene.glb")
+    leaves_glb = os.path.join(models_dir, "leaves.glb")
 
     # 1. Export standalone leaves prototypes (LOD 0, LOD 1, LOD 2)
     log_step("Exporting standalone leaves prototypes (LOD 0, 1, 2)...")
@@ -47,7 +47,7 @@ def export_modular_assets() -> None:
         )
         log_step(f"Exported: {out_path} ({os.path.getsize(out_path)} bytes)")
 
-    lod0_path = os.path.join(gltf_dir, "leaves_lod0.glb")
+    lod0_path = os.path.join(models_dir, "leaves_lod0.glb")
     export_single_mesh(leaf_obj, lod0_path)
     export_single_mesh(leaf_obj, leaves_glb)
 
@@ -60,7 +60,7 @@ def export_modular_assets() -> None:
     mod1.ratio = 0.25
     bpy.context.view_layer.objects.active = lod1_obj
     bpy.ops.object.modifier_apply(modifier="Decimate")
-    lod1_path = os.path.join(gltf_dir, "leaves_lod1.glb")
+    lod1_path = os.path.join(models_dir, "leaves_lod1.glb")
     export_single_mesh(lod1_obj, lod1_path)
     bpy.data.objects.remove(lod1_obj, do_unlink=True)
 
@@ -73,7 +73,7 @@ def export_modular_assets() -> None:
     mod2.ratio = 0.06
     bpy.context.view_layer.objects.active = lod2_obj
     bpy.ops.object.modifier_apply(modifier="Decimate")
-    lod2_path = os.path.join(gltf_dir, "leaves_lod2.glb")
+    lod2_path = os.path.join(models_dir, "leaves_lod2.glb")
     export_single_mesh(lod2_obj, lod2_path)
     bpy.data.objects.remove(lod2_obj, do_unlink=True)
 

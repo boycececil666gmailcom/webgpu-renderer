@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./windows/run.sh"
             echo "  ./windows/run.sh -d"
             echo "  ./windows/run.sh --release"
-            echo "  ./windows/run.sh -m gltf/tree_01.glb"
+            echo "  ./windows/run.sh -m assets/models/tree_01.glb"
             echo "  ./windows/run.sh -t"
             exit 0
             ;;
@@ -170,7 +170,7 @@ launch_viewer() {
 bake_textures() {
     log "INFO" "Baking offline texture mipmaps into binary cache..."
     cd "$PROJECT_ROOT"
-    python Model/scripts/bake_texture_mipmaps.py 2>&1 | tee -a "$RUN_LOG"
+    python dcc/scripts/bake_texture_mipmaps.py 2>&1 | tee -a "$RUN_LOG"
 }
 
 #endregion

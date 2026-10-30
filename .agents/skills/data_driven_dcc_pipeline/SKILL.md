@@ -14,7 +14,7 @@ This skill defines the contract and execution protocols for synchronizing 3D sce
 ```
 +---------------------------------------------------------------------------------+
 |                               SINGLE SOURCE OF TRUTH                            |
-|                            Model/asset.blend (Blender 5.0)                      |
+|                            dcc/asset.blend (Blender 5.0)                        |
 |                - Geometry, Transforms, Collections, Materials                   |
 |                - Principled BSDF PBR Sockets + Baked Image Textures             |
 +---------------------------------------------------------------------------------+
@@ -23,7 +23,7 @@ This skill defines the contract and execution protocols for synchronizing 3D sce
                                        v
 +---------------------------------------------------------------------------------+
 |                              DECLARATIVE DATA SCHEMA                            |
-|                             gltf/base_scene.glb                                 |
+|                             assets/models/base_scene.glb                        |
 |                - Core PBR (baseColor, metallic, roughness, normal)              |
 |                - Extensions (KHR_materials_unlit, KHR_materials_clearcoat)      |
 +---------------------------------------------------------------------------------+
@@ -91,7 +91,7 @@ if coll:
 
 bpy.ops.wm.save_mainfile()
 bpy.ops.export_scene.gltf(
-    filepath='gltf/base_scene.glb',
+    filepath='assets/models/base_scene.glb',
     use_selection=True,
     export_format='GLB',
     export_apply=False,

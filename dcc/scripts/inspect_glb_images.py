@@ -1,7 +1,7 @@
 import json
 import struct
 
-for path in ['gltf/base_scene.glb', 'gltf/base_scene_optimized.glb']:
+for path in ['assets/models/base_scene.glb']:
     with open(path, 'rb') as f:
         f.read(12)
         chunk_len, _ = struct.unpack('<II', f.read(8))

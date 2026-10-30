@@ -51,11 +51,11 @@ fn test_render_capture_frame() {
         width,
         height,
         include_str!("../shaders/standard_pbr.wgsl"),
-        "Model/textures/autumn_forest_01_1k.png",
+        "assets/textures/autumn_forest_01_1k.png",
     );
 
     let mut scene = GltfScene::load(
-        "gltf/base_scene.glb",
+        "assets/models/base_scene.glb",
         Some("config/scatter.json"),
         &renderer.device,
         &renderer.queue,

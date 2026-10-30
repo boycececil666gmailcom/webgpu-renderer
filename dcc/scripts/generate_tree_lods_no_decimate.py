@@ -152,7 +152,7 @@ def export_selected_glbs(export_manifest: list, gltf_dir: str) -> None:
 
 #region Core
 def run_tree_lod_pipeline(repo_root: str) -> None:
-    gltf_dir = os.path.join(repo_root, "gltf")
+    models_dir = os.path.join(repo_root, "assets", "models")
     t1_lod0 = bpy.data.objects.get("Tree_01_LOD0")
     t2_lod0 = bpy.data.objects.get("Tree_02_LOD0")
     aspen_lod0 = bpy.data.objects.get("aspen2_LOD0")
@@ -185,7 +185,7 @@ def run_tree_lod_pipeline(repo_root: str) -> None:
         ("aspen2_LOD2", "tree_aspen_lod2.glb"),
         ("aspen2_LOD3", "tree_aspen_lod3.glb"),
     ]
-    export_selected_glbs(manifest, gltf_dir)
+    export_selected_glbs(manifest, models_dir)
 #endregion
 
 #region Main

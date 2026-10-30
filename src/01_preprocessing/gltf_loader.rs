@@ -436,7 +436,18 @@ impl GltfScene {
     }
 
     fn decode_image_data(source: &gltf::image::Source, base_path: Option<&Path>, buffers: &[gltf::buffer::Data], max_size: u32) -> Option<TextureData> {
-        let cache_dir = base_path.unwrap_or_else(|| Path::new(".")).join("cache");
+        let bp = base_path.unwrap_or_else(|| Path::new("."));
+        let cache_dir = if bp.join("cache").exists() {
+            bp.join("cache")
+        } else if let Some(parent) = bp.parent() {
+            if parent.join("cache").exists() {
+                parent.join("cache")
+            } else {
+                bp.join("cache")
+            }
+        } else {
+            bp.join("cache")
+        };
         match source {
             gltf::image::Source::View { view, .. } => {
                 let start = view.offset();

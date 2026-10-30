@@ -72,7 +72,7 @@ main() {
     local script_dir; script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root
     project_root="$(git -C "${script_dir}" rev-parse --show-toplevel 2>/dev/null || (cd "${script_dir}/../../../.." && pwd))"
-    local local_glb="${project_root}/gltf/base_scene.glb"
+    local local_glb="${project_root}/assets/models/base_scene.glb"
     local output_img="${project_root}/live_sync.png"
 
     if [[ ! -f "$local_glb" ]]; then

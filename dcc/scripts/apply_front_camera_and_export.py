@@ -10,7 +10,7 @@ from mathutils import Vector
 class SceneConfig:
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     BLEND_PATH = os.path.join(PROJECT_ROOT, "Model", "asset.blend")
-    GLB_PATH = os.path.join(PROJECT_ROOT, "gltf", "base_scene.glb")
+    GLB_PATH = os.path.join(PROJECT_ROOT, "assets", "models", "base_scene.glb")
     
     # Camera low-angle hero shot coordinates revealing canopy
     CAM_LOC = Vector((-50.6841, 10.8906, 1.35))
