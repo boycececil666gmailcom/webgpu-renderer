@@ -152,7 +152,7 @@ def run():
         for obj in car_coll.all_objects:
             obj.select_set(True)
             
-    for name in ["ENV_Road_Asphalt_ClosedLoop", "ENV_Terrain_Forest_Floor_Layered", "ENV_Sky_Column", "CAM_Scene_Follow", "Sun"]:
+    for name in ["ENV_Road_Asphalt_ClosedLoop", "ENV_Terrain_Forest_Floor_Layered", "ENV_Sky_Dome", "CAM_Scene_Follow", "Sun"]:
         o = bpy.data.objects.get(name)
         if o:
             o.select_set(True)

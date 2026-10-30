@@ -415,7 +415,7 @@
     "target_surface_node": "ENV_Road_Asphalt_ClosedLoop",
     "weight_channel": 1,
     "weight_component": "R",
-    "count": 1000,
+    "count": 2500,
     "seed": 1301,
     "bounding_sphere_radius": 0.15,
     "tolerance": 0.85,

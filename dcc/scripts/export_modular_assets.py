@@ -104,7 +104,7 @@ def export_modular_assets() -> None:
     for name in [
         "ENV_Road_Asphalt_ClosedLoop",
         "ENV_Terrain_Forest_Floor_Layered",
-        "ENV_Sky_Column",
+        "ENV_Sky_Dome",
         "CAM_Scene_Follow",
         "Sun"
     ]:

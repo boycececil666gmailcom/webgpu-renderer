@@ -20,7 +20,7 @@ class SceneConfig:
     ENV_OBJECTS = [
         "ENV_Road_Asphalt_ClosedLoop",
         "ENV_Terrain_Forest_Floor_Layered",
-        "ENV_Sky_Column",
+        "ENV_Sky_Dome",
         "CAM_Scene_Follow",
         "Sun"
     ]
