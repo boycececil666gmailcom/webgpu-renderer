@@ -78,7 +78,16 @@ impl Config {
             if raw_name.starts_with('/') {
                 raw_name.to_string()
             } else {
-                format!("/sdcard/Android/data/org.antigravity.webgpurenderer/files/{}", Path::new(raw_name).file_name().and_then(|n| n.to_str()).unwrap_or(raw_name))
+                let file_name = Path::new(raw_name).file_name().and_then(|n| n.to_str()).unwrap_or(raw_name);
+                let external = format!("/sdcard/Android/data/org.antigravity.webgpurenderer/files/{file_name}");
+                let internal = format!("/data/user/0/org.antigravity.webgpurenderer/files/{file_name}");
+                if Path::new(&external).exists() {
+                    external
+                } else if Path::new(&internal).exists() {
+                    internal
+                } else {
+                    external
+                }
             }
         }
 
@@ -132,6 +141,8 @@ impl Config {
         let candidates = [
             "/sdcard/Android/data/org.antigravity.webgpurenderer/files/settings.json",
             "/sdcard/Android/data/org.antigravity.webgpurenderer/files/config/settings.json",
+            "/data/user/0/org.antigravity.webgpurenderer/files/settings.json",
+            "/data/user/0/org.antigravity.webgpurenderer/files/config/settings.json",
         ];
 
         #[cfg(not(target_os = "android"))]

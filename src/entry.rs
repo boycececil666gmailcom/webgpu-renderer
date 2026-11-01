@@ -546,8 +546,93 @@ fn handle_engine_event(
 
 // #region Core
 #[cfg(target_os = "android")]
+fn extract_assets_from_apk(app: &AndroidApp) {
+    use std::ffi::CString;
+    use std::io::{Read, Write};
+    use std::path::PathBuf;
+
+    let target_dirs = [
+        PathBuf::from("/sdcard/Android/data/org.antigravity.webgpurenderer/files"),
+        app.internal_data_path().unwrap_or_else(|| PathBuf::from("/data/user/0/org.antigravity.webgpurenderer/files")),
+    ];
+
+    let asset_mgr = app.asset_manager();
+
+    // Check if base_scene.glb already exists in the primary target directory
+    let primary_dir = &target_dirs[0];
+    let base_scene = primary_dir.join("base_scene.glb");
+    if base_scene.exists() && std::fs::metadata(&base_scene).map(|m| m.len() > 10_000_000).unwrap_or(false) {
+        log_info("Android", "Assets", "Assets already extracted and verified on storage.");
+        return;
+    }
+
+    log_info("Android", "Assets", "First launch: extracting bundled APK assets to local device storage...");
+
+    let asset_files = [
+        // Models
+        ("models/base_scene.glb", "base_scene.glb"),
+        ("models/bush_01.glb", "bush_01.glb"),
+        ("models/fern_01.glb", "fern_01.glb"),
+        ("models/fern_02.glb", "fern_02.glb"),
+        ("models/leaves.glb", "leaves.glb"),
+        ("models/rock_01.glb", "rock_01.glb"),
+        ("models/rock_02.glb", "rock_02.glb"),
+        ("models/rock_03.glb", "rock_03.glb"),
+        ("models/tree_01.glb", "tree_01.glb"),
+        ("models/tree_02.glb", "tree_02.glb"),
+        ("models/tree_aspen.glb", "tree_aspen.glb"),
+        ("models/tree_aspen_lod0.glb", "tree_aspen_lod0.glb"),
+        ("models/tree_maple.glb", "tree_maple.glb"),
+        ("models/tree_maple_lod0.glb", "tree_maple_lod0.glb"),
+        // Textures
+        ("textures/je_gray_02_1k.exr", "je_gray_02_1k.exr"),
+        ("textures/autumn_forest_01_1k.png", "autumn_forest_01_1k.png"),
+        // Config
+        ("config/scatter.json", "scatter.json"),
+        ("config/settings.json", "settings.json"),
+    ];
+
+    let mut buf = vec![0u8; 256 * 1024];
+
+    for dir in &target_dirs {
+        if std::fs::create_dir_all(dir).is_err() {
+            continue;
+        }
+
+        for &(apk_path, out_name) in &asset_files {
+            let dest_path = dir.join(out_name);
+            if dest_path.exists() && std::fs::metadata(&dest_path).map(|m| m.len() > 0).unwrap_or(false) {
+                continue;
+            }
+
+            if let Ok(cname) = CString::new(apk_path) {
+                if let Some(mut asset) = asset_mgr.open(&cname) {
+                    if let Ok(mut out_file) = std::fs::File::create(&dest_path) {
+                        let mut total_bytes = 0usize;
+                        loop {
+                            match asset.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    if out_file.write_all(&buf[..n]).is_err() {
+                                        break;
+                                    }
+                                    total_bytes += n;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        log_info("Android", "Extract", &format!("Extracted {out_name} ({total_bytes} bytes) to {}", dest_path.display()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub fn android_main(app: AndroidApp) {
+    extract_assets_from_apk(&app);
     let config = Config::load();
     let event_loop = match create_android_event_loop(app) {
         Ok(el) => el,
