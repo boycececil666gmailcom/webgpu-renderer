@@ -184,18 +184,26 @@ fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) ->
     // Diffuse IBL: hemispherical irradiance filtered at top mip levels
     let diffuse_irradiance = sample_equirect(norm, 8.5);
     let kd_env = (vec3<f32>(1.0) - f0) * (1.0 - mat.metallic);
-    // When in shadow, the sky hemisphere is occluded by the caster, darkening indirect ambient
-    let sky_occlusion = mix(0.25, 1.0, shadow);
-    let diffuse_ibl = kd_env * diffuse_irradiance * base_color.rgb * 0.45 * sky_occlusion;
+    // When in shadow, the sky hemisphere is partially occluded.
+    // Foliage has a higher ambient floor (0.75) because tree canopies are porous and scatter light.
+    let sky_floor = select(0.45, 0.75, mat.alpha_mode == 1u);
+    let sky_occlusion = mix(sky_floor, 1.0, shadow);
+    let diffuse_ibl = kd_env * diffuse_irradiance * base_color.rgb * 0.75 * sky_occlusion;
 
     // Specular IBL: prefiltered environment radiance filtered by roughness
     let reflect_dir = reflect(-view_dir, norm);
     let spec_lod = rough * 8.0;
     let prefiltered_spec = sample_equirect(reflect_dir, spec_lod);
     let f_env = f0 + (max(vec3<f32>(1.0 - rough), f0) - f0) * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
-    let specular_ibl = f_env * prefiltered_spec * mix(0.35, 1.0, shadow);
+    let specular_ibl = f_env * prefiltered_spec * mix(0.45, 1.0, shadow);
 
     var total_ibl = diffuse_ibl + specular_ibl;
+
+    // Ground bounce lighting for downward-facing foliage and canopy undersides
+    if (mat.alpha_mode == 1u) {
+        let ground_bounce = base_color.rgb * vec3<f32>(0.22, 0.26, 0.15) * max(-norm.y, 0.0);
+        total_ibl = total_ibl + ground_bounce;
+    }
 
     // Clearcoat IBL: sharp specular reflection on top of base coat
     if (mat.clearcoat > 0.0) {
@@ -230,15 +238,16 @@ fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) ->
     let kd_direct = (vec3<f32>(1.0) - f_direct) * (1.0 - mat.metallic);
     let diff_direct = kd_direct * base_color.rgb / pi;
 
-    // Foliage Subsurface Translucency (back-face light scatter)
+    // Foliage Subsurface Translucency (back-face light scatter penetrating the canopy)
     var foliage_translucency = vec3<f32>(0.0);
     if (mat.alpha_mode == 1u) {
         let back_sun = max(dot(-norm, l), 0.0);
-        foliage_translucency = base_color.rgb * frame.sun_color.rgb * back_sun * 0.45;
+        let trans_shadow = mix(0.40, 1.0, shadow);
+        foliage_translucency = base_color.rgb * frame.sun_color.rgb * back_sun * 0.45 * trans_shadow;
     }
 
     let direct_color = (diff_direct + spec_direct) * frame.sun_color.rgb * n_dot_l * shadow
-                     + foliage_translucency * shadow;
+                     + foliage_translucency;
 
     var total_color = total_ibl + direct_color;
 
