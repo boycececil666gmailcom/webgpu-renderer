@@ -289,10 +289,10 @@
     "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "G",
-    "count": 1600,
+    "count": 3500,
     "seed": 1101,
     "bounding_sphere_radius": 0.65,
-    "tolerance": 0.7,
+    "tolerance": 0.78,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "rotation": {
@@ -302,8 +302,8 @@
         ]
       },
       "scale": [
-        0.9,
-        1.8
+        1.0,
+        3.6
       ],
       "upright": true
     },
@@ -335,10 +335,10 @@
     "target_surface_node": "ENV_Terrain_Forest_Floor_Layered",
     "weight_channel": 1,
     "weight_component": "G",
-    "count": 1500,
+    "count": 3000,
     "seed": 1102,
     "bounding_sphere_radius": 0.45,
-    "tolerance": 0.7,
+    "tolerance": 0.78,
     "cull_screen_coverage_percent": 0.001,
     "transform": {
       "rotation": {
@@ -348,8 +348,8 @@
         ]
       },
       "scale": [
-        0.9,
-        1.8
+        1.0,
+        3.4
       ],
       "upright": true
     },
