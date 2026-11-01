@@ -35,6 +35,8 @@ assets/cache/
 .kilo/
 *.idsig
 live_sync.png
+scratch/
+Model/
 
 *.bak
 *.log

@@ -2,6 +2,9 @@ struct FrameUniforms {
     view: mat4x4<f32>,
     projection: mat4x4<f32>,
     cam_pos: vec4<f32>,
+    sun_view_proj: mat4x4<f32>,
+    sun_dir: vec4<f32>,
+    sun_color: vec4<f32>,
 };
 
 struct MaterialUniforms {
@@ -19,6 +22,8 @@ struct MaterialUniforms {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var env_map: texture_2d<f32>;
 @group(0) @binding(2) var env_sampler: sampler;
+@group(0) @binding(3) var shadow_map: texture_depth_2d;
+@group(0) @binding(4) var shadow_sampler: sampler_comparison;
 
 @group(1) @binding(0) var<uniform> mat: MaterialUniforms;
 @group(1) @binding(1) var mat_texture: texture_2d<f32>;
@@ -76,11 +81,93 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+@vertex
+fn vs_shadow(in: VertexInput) -> @builtin(position) vec4<f32> {
+    let model = mat4x4<f32>(
+        in.model_col0,
+        in.model_col1,
+        in.model_col2,
+        in.model_col3,
+    );
+    let world_pos4 = model * vec4<f32>(in.position, 1.0);
+    return frame.sun_view_proj * world_pos4;
+}
+
+struct ShadowMaskedOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) tex_coords: vec2<f32>,
+};
+
+@vertex
+fn vs_shadow_masked(in: VertexInput) -> ShadowMaskedOutput {
+    var out: ShadowMaskedOutput;
+    let model = mat4x4<f32>(
+        in.model_col0,
+        in.model_col1,
+        in.model_col2,
+        in.model_col3,
+    );
+    let world_pos4 = model * vec4<f32>(in.position, 1.0);
+    out.clip_position = frame.sun_view_proj * world_pos4;
+    out.tex_coords = in.tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_shadow_masked(in: ShadowMaskedOutput) {
+    var base_color = mat.base_color;
+    if (mat.use_texture == 1u) {
+        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
+    }
+    if (base_color.a < mat.alpha_cutoff) {
+        discard;
+    }
+}
+
+fn sample_shadow(world_pos: vec3<f32>, norm: vec3<f32>) -> f32 {
+    let light_space_pos = frame.sun_view_proj * vec4<f32>(world_pos, 1.0);
+    let proj_coords = light_space_pos.xyz / light_space_pos.w;
+    let uv = proj_coords.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+    let current_depth = proj_coords.z;
+
+    if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 || current_depth > 1.0 || current_depth < 0.0) {
+        return 1.0;
+    }
+
+    let n_dot_l = max(dot(norm, frame.sun_dir.xyz), 0.0);
+    let bias = max(0.0035 * (1.0 - n_dot_l), 0.0006);
+
+    var shadow = 0.0;
+    let texel_size = vec2<f32>(1.0 / 2048.0, 1.0 / 2048.0);
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow += textureSampleCompareLevel(
+                shadow_map,
+                shadow_sampler,
+                uv + offset,
+                current_depth - bias
+            );
+        }
+    }
+    return shadow / 9.0;
+}
+
+fn tone_map_aces(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) -> vec4<f32> {
     if (mat.is_unlit == 1u) {
         return base_color;
     }
 
+    let pi = 3.14159265;
     var norm = normalize(in.normal);
     if (!is_front) {
         norm = -norm;
@@ -91,18 +178,22 @@ fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) ->
     let f0 = mix(vec3<f32>(0.04), base_color.rgb, mat.metallic);
     let rough = max(mat.roughness, 0.04);
 
-    // --- Image-Based Lighting (IBL) ---
+    let shadow = sample_shadow(in.world_pos, norm);
+
+    // --- Image-Based Lighting (IBL) with Shadow Ambient Occlusion ---
     // Diffuse IBL: hemispherical irradiance filtered at top mip levels
     let diffuse_irradiance = sample_equirect(norm, 8.5);
     let kd_env = (vec3<f32>(1.0) - f0) * (1.0 - mat.metallic);
-    let diffuse_ibl = kd_env * diffuse_irradiance * base_color.rgb;
+    // When in shadow, the sky hemisphere is occluded by the caster, darkening indirect ambient
+    let sky_occlusion = mix(0.25, 1.0, shadow);
+    let diffuse_ibl = kd_env * diffuse_irradiance * base_color.rgb * 0.45 * sky_occlusion;
 
     // Specular IBL: prefiltered environment radiance filtered by roughness
     let reflect_dir = reflect(-view_dir, norm);
     let spec_lod = rough * 8.0;
     let prefiltered_spec = sample_equirect(reflect_dir, spec_lod);
     let f_env = f0 + (max(vec3<f32>(1.0 - rough), f0) - f0) * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
-    let specular_ibl = f_env * prefiltered_spec;
+    let specular_ibl = f_env * prefiltered_spec * mix(0.35, 1.0, shadow);
 
     var total_ibl = diffuse_ibl + specular_ibl;
 
@@ -114,7 +205,59 @@ fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) ->
         total_ibl = total_ibl * (1.0 - cc_fresnel_env * mat.clearcoat) + cc_ibl;
     }
 
-    return vec4<f32>(total_ibl, base_color.a);
+    // --- Direct Directional Sun Lighting ---
+    let l = normalize(frame.sun_dir.xyz);
+    let h = normalize(view_dir + l);
+    let n_dot_l = max(dot(norm, l), 0.0);
+    let n_dot_h = max(dot(norm, h), 0.0);
+    let v_dot_h = max(dot(view_dir, h), 0.0);
+
+    // Direct Specular (GGX)
+    let alpha_rough = rough * rough;
+    let alpha2 = alpha_rough * alpha_rough;
+    let denom_d = (n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0);
+    let d = alpha2 / (pi * denom_d * denom_d);
+
+    let k_direct = (rough + 1.0) * (rough + 1.0) / 8.0;
+    let g_v = n_dot_v / (n_dot_v * (1.0 - k_direct) + k_direct);
+    let g_l = n_dot_l / (n_dot_l * (1.0 - k_direct) + k_direct);
+    let g = g_v * g_l;
+
+    let f_direct = f0 + (1.0 - f0) * pow(clamp(1.0 - v_dot_h, 0.0, 1.0), 5.0);
+    let spec_direct = (d * g * f_direct) / max(4.0 * n_dot_v * n_dot_l, 0.001);
+
+    // Direct Diffuse (Lambert)
+    let kd_direct = (vec3<f32>(1.0) - f_direct) * (1.0 - mat.metallic);
+    let diff_direct = kd_direct * base_color.rgb / pi;
+
+    // Foliage Subsurface Translucency (back-face light scatter)
+    var foliage_translucency = vec3<f32>(0.0);
+    if (mat.alpha_mode == 1u) {
+        let back_sun = max(dot(-norm, l), 0.0);
+        foliage_translucency = base_color.rgb * frame.sun_color.rgb * back_sun * 0.45;
+    }
+
+    let direct_color = (diff_direct + spec_direct) * frame.sun_color.rgb * n_dot_l * shadow
+                     + foliage_translucency * shadow;
+
+    var total_color = total_ibl + direct_color;
+
+    // Clearcoat direct reflection
+    if (mat.clearcoat > 0.0) {
+        let cc_rough = 0.1;
+        let cc_alpha = cc_rough * cc_rough;
+        let cc_denom = (n_dot_h * n_dot_h * (cc_alpha * cc_alpha - 1.0) + 1.0);
+        let cc_d = (cc_alpha * cc_alpha) / (pi * cc_denom * cc_denom);
+        let cc_f = 0.04 + 0.96 * pow(clamp(1.0 - v_dot_h, 0.0, 1.0), 5.0);
+        let cc_spec = (cc_d * cc_f * mat.clearcoat) / max(4.0 * n_dot_v * n_dot_l, 0.001);
+        total_color = total_color + cc_spec * frame.sun_color.rgb * n_dot_l * shadow;
+    }
+
+    // ACES Filmic Tone Mapping with exposure calibration
+    let exposure = 1.15;
+    let mapped = tone_map_aces(total_color * exposure);
+
+    return vec4<f32>(mapped, base_color.a);
 }
 
 // Full Early-Z with immediate hardware depth writes (ZERO discard instructions)

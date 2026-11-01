@@ -24,6 +24,7 @@ pub struct Material {
     pub double_sided: bool,
     pub has_texture: bool,
     pub alpha_mode: u32,
+    pub is_unlit: bool,
 }
 // #endregion
 
@@ -101,6 +102,7 @@ impl Material {
             double_sided,
             has_texture,
             alpha_mode,
+            is_unlit,
         }
     }
 }
