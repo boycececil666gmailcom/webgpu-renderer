@@ -16,10 +16,16 @@ fn test_render_capture_frame() {
         return;
     };
 
+    let adapter_features = adapter.features();
+    let mut required_features = wgpu::Features::empty();
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Test Device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: Default::default(),
         },

@@ -23,11 +23,15 @@ pub struct Material {
     pub is_transparent: bool,
     pub double_sided: bool,
     pub has_texture: bool,
+    pub alpha_mode: u32,
 }
 // #endregion
 
 // #region Scaffolding
 impl Material {
+    pub fn is_masked(&self) -> bool {
+        self.alpha_mode == 1
+    }
     fn create_uniform_buffer(device: &wgpu::Device, uniforms: &MaterialUniforms) -> wgpu::Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Uniform Buffer"),
@@ -90,7 +94,14 @@ impl Material {
         let uniform_buffer = Self::create_uniform_buffer(device, &uniforms);
         let bind_group = Self::create_bind_group(device, layout, &uniform_buffer, view, default_sampler);
 
-        Self { uniform_buffer, bind_group, is_transparent, double_sided, has_texture }
+        Self {
+            uniform_buffer,
+            bind_group,
+            is_transparent,
+            double_sided,
+            has_texture,
+            alpha_mode,
+        }
     }
 }
 // #endregion

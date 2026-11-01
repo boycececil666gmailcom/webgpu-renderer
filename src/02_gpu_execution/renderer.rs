@@ -18,6 +18,13 @@ pub struct FrameUniforms {
     pub cam_pos: [f32; 4],
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct DrawItem {
+    pub distance_sq: f32,
+    pub node_index: usize,
+    pub prim_index: usize,
+}
+
 pub struct Renderer {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
@@ -31,13 +38,17 @@ pub struct Renderer {
     pub frame_bind_group: wgpu::BindGroup,
     pub pipeline_opaque: wgpu::RenderPipeline,
     pub pipeline_opaque_double_sided: wgpu::RenderPipeline,
+    pub pipeline_masked: wgpu::RenderPipeline,
+    pub pipeline_masked_double_sided: wgpu::RenderPipeline,
     pub pipeline_transparent: wgpu::RenderPipeline,
     pub pipeline_transparent_double_sided: wgpu::RenderPipeline,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub depth_size: (u32, u32),
     pub clear_color: wgpu::Color,
-    transparent_draws: Vec<(f32, usize, usize)>,
+    opaque_draws: Vec<DrawItem>,
+    masked_draws: Vec<DrawItem>,
+    transparent_draws: Vec<DrawItem>,
 }
 // #endregion
 
@@ -355,7 +366,14 @@ impl Renderer {
         bgl_frame: &wgpu::BindGroupLayout,
         bgl_mat: &wgpu::BindGroupLayout,
         shader_src: &str,
-    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    ) -> (
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+    ) {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[bgl_frame, bgl_mat],
@@ -443,7 +461,7 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_src)),
         });
 
-        let make_pipeline = |label: &str, depth_write: bool, cull: Option<wgpu::Face>| {
+        let make_pipeline = |label: &str, entry_point: &str, depth_write: bool, cull: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -455,7 +473,7 @@ impl Renderer {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some(entry_point),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface_format,
                         blend: if depth_write {
@@ -485,14 +503,21 @@ impl Renderer {
             })
         };
 
-        let pipeline_opaque = make_pipeline("Opaque PBR Pipeline", true, Some(wgpu::Face::Back));
-        let pipeline_opaque_double_sided = make_pipeline("Opaque PBR Double Sided Pipeline", true, None);
-        let pipeline_transparent = make_pipeline("Transparent PBR Pipeline", false, Some(wgpu::Face::Back));
-        let pipeline_transparent_double_sided = make_pipeline("Transparent PBR Double Sided Pipeline", false, None);
+        // 1. Solid opaque (fs_opaque has ZERO discard statements; full hardware Early-Z raster writes)
+        let pipeline_opaque = make_pipeline("Opaque PBR Pipeline", "fs_opaque", true, Some(wgpu::Face::Back));
+        let pipeline_opaque_double_sided = make_pipeline("Opaque PBR Double Sided Pipeline", "fs_opaque", true, None);
+        // 2. Alpha-tested foliage cutout (fs_masked discards based on alpha cutoff)
+        let pipeline_masked = make_pipeline("Masked PBR Pipeline", "fs_masked", true, Some(wgpu::Face::Back));
+        let pipeline_masked_double_sided = make_pipeline("Masked PBR Double Sided Pipeline", "fs_masked", true, None);
+        // 3. Alpha-blended transparent (fs_transparent without depth writes)
+        let pipeline_transparent = make_pipeline("Transparent PBR Pipeline", "fs_transparent", false, Some(wgpu::Face::Back));
+        let pipeline_transparent_double_sided = make_pipeline("Transparent PBR Double Sided Pipeline", "fs_transparent", false, None);
 
         (
             pipeline_opaque,
             pipeline_opaque_double_sided,
+            pipeline_masked,
+            pipeline_masked_double_sided,
             pipeline_transparent,
             pipeline_transparent_double_sided,
         )
@@ -545,8 +570,11 @@ impl Renderer {
         );
     }
 
-    fn build_transparent_draws(&mut self, view: Mat4, scene: &GltfScene) {
+    fn build_draw_lists(&mut self, cam_pos: Vec3, scene: &GltfScene) {
+        self.opaque_draws.clear();
+        self.masked_draws.clear();
         self.transparent_draws.clear();
+
         for (node_index, node) in scene.render_nodes.iter().enumerate() {
             if node.instance_count == 0 {
                 continue;
@@ -554,24 +582,61 @@ impl Renderer {
             let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
                 continue;
             };
+
             for (prim_index, prim) in primitives.iter().enumerate() {
-                if !scene.materials[prim.material_index].is_transparent {
-                    continue;
+                let material = &scene.materials[prim.material_index];
+                let dist_sq = if node.instance_count > 1 {
+                    node.min_cam_distance_sq
+                } else {
+                    let world_center = node.world_transform.transform_point3(prim.center);
+                    cam_pos.distance_squared(world_center)
+                };
+
+                let item = DrawItem {
+                    distance_sq: dist_sq,
+                    node_index,
+                    prim_index,
+                };
+
+                if material.is_transparent || material.alpha_mode == 2 {
+                    self.transparent_draws.push(item);
+                } else if material.is_masked() {
+                    self.masked_draws.push(item);
+                } else {
+                    self.opaque_draws.push(item);
                 }
-                let world_center = node.world_transform.transform_point3(prim.center);
-                let depth = view.transform_point3(world_center).z;
-                self.transparent_draws.push((depth, node_index, prim_index));
             }
         }
-        self.transparent_draws.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        // 1. Solid Opaque: Front-to-Back (closest first to establish Early-Z occluder buffer)
+        self.opaque_draws.sort_by(|a, b| a.distance_sq.total_cmp(&b.distance_sq));
+
+        // 2. Alpha-tested foliage / cutout: Front-to-Back (closer leaves prime depth, farther leaves culled by Early-Z)
+        self.masked_draws.sort_by(|a, b| a.distance_sq.total_cmp(&b.distance_sq));
+
+        // 3. Transparent: Back-to-Front (farthest first for correct alpha blending accumulation)
+        self.transparent_draws.sort_by(|a, b| b.distance_sq.total_cmp(&a.distance_sq));
     }
 
     fn pipeline_for(&self, material: &Material) -> &wgpu::RenderPipeline {
-        match (material.is_transparent, material.double_sided) {
-            (false, false) => &self.pipeline_opaque,
-            (false, true) => &self.pipeline_opaque_double_sided,
-            (true, false) => &self.pipeline_transparent,
-            (true, true) => &self.pipeline_transparent_double_sided,
+        if material.is_transparent || material.alpha_mode == 2 {
+            if material.double_sided {
+                &self.pipeline_transparent_double_sided
+            } else {
+                &self.pipeline_transparent
+            }
+        } else if material.is_masked() {
+            if material.double_sided {
+                &self.pipeline_masked_double_sided
+            } else {
+                &self.pipeline_masked
+            }
+        } else {
+            if material.double_sided {
+                &self.pipeline_opaque_double_sided
+            } else {
+                &self.pipeline_opaque
+            }
         }
     }
 
@@ -579,14 +644,15 @@ impl Renderer {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
-        view: Mat4,
+        cam_pos: Vec3,
         scene: &GltfScene,
     ) -> crate::preprocessing::telemetry::FrameStats {
-        self.build_transparent_draws(view, scene);
+        self.build_draw_lists(cam_pos, scene);
 
         let mut draw_calls = 0u32;
         let mut triangles_drawn = 0u64;
         let mut instances_drawn = 0u32;
+        let mut visited_nodes = vec![false; scene.render_nodes.len()];
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Main Render Pass"),
@@ -612,37 +678,67 @@ impl Renderer {
 
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
-        for node in &scene.render_nodes {
+        // Phase 1: Solid Opaque (Front-to-Back) - primes Z-buffer with unconditional depth writes
+        for &item in &self.opaque_draws {
+            let node = &scene.render_nodes[item.node_index];
             if node.instance_count == 0 {
                 continue;
             }
             let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
                 continue;
             };
-            instances_drawn += node.instance_count;
-            for prim in primitives {
-                let material = &scene.materials[prim.material_index];
-                if material.is_transparent {
-                    continue;
-                }
-                draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
-                draw_calls += 1;
-                triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
-            }
-        }
-
-        for &(_, node_index, prim_index) in &self.transparent_draws {
-            let node = &scene.render_nodes[node_index];
-            if node.instance_count == 0 {
-                continue;
-            }
-            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
-                continue;
-            };
-            let Some(prim) = primitives.get(prim_index) else {
+            let Some(prim) = primitives.get(item.prim_index) else {
                 continue;
             };
             let material = &scene.materials[prim.material_index];
+            if !visited_nodes[item.node_index] {
+                visited_nodes[item.node_index] = true;
+                instances_drawn += node.instance_count;
+            }
+            draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
+            draw_calls += 1;
+            triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
+        }
+
+        // Phase 2: Masked Foliage / Cutout (Front-to-Back) - Early-Z rejection against solid occluders
+        for &item in &self.masked_draws {
+            let node = &scene.render_nodes[item.node_index];
+            if node.instance_count == 0 {
+                continue;
+            }
+            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
+                continue;
+            };
+            let Some(prim) = primitives.get(item.prim_index) else {
+                continue;
+            };
+            let material = &scene.materials[prim.material_index];
+            if !visited_nodes[item.node_index] {
+                visited_nodes[item.node_index] = true;
+                instances_drawn += node.instance_count;
+            }
+            draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
+            draw_calls += 1;
+            triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
+        }
+
+        // Phase 3: Transparent (Back-to-Front) - Alpha blending with depth read
+        for &item in &self.transparent_draws {
+            let node = &scene.render_nodes[item.node_index];
+            if node.instance_count == 0 {
+                continue;
+            }
+            let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
+                continue;
+            };
+            let Some(prim) = primitives.get(item.prim_index) else {
+                continue;
+            };
+            let material = &scene.materials[prim.material_index];
+            if !visited_nodes[item.node_index] {
+                visited_nodes[item.node_index] = true;
+                instances_drawn += node.instance_count;
+            }
             draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
             draw_calls += 1;
             triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
@@ -709,6 +805,8 @@ impl Renderer {
         let (
             pipeline_opaque,
             pipeline_opaque_double_sided,
+            pipeline_masked,
+            pipeline_masked_double_sided,
             pipeline_transparent,
             pipeline_transparent_double_sided,
         ) = Self::create_pipelines(&device, surface_format, &bgl_frame, &bgl_mat, shader_source);
@@ -729,6 +827,8 @@ impl Renderer {
             frame_bind_group,
             pipeline_opaque,
             pipeline_opaque_double_sided,
+            pipeline_masked,
+            pipeline_masked_double_sided,
             pipeline_transparent,
             pipeline_transparent_double_sided,
             depth_texture,
@@ -740,6 +840,8 @@ impl Renderer {
                 b: 0.85,
                 a: 1.0,
             },
+            opaque_draws: Vec::new(),
+            masked_draws: Vec::new(),
             transparent_draws: Vec::new(),
         }
     }
@@ -781,7 +883,7 @@ impl Renderer {
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Frame Command Encoder"),
         });
-        let stats = self.record_render_pass(&mut enc, output, view, scene);
+        let stats = self.record_render_pass(&mut enc, output, cam_pos, scene);
         let submission = self.queue.submit(std::iter::once(enc.finish()));
         // The Android emulator Vulkan path can present frames with missing draws
         // while submissions overlap. Complete this frame before presenting it.

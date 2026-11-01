@@ -215,10 +215,22 @@ fn init_render_state(
         }
     };
 
+    let adapter_features = adapter.features();
+    let mut required_features = wgpu::Features::empty();
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_ASTC;
+    }
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_ETC2) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_ETC2;
+    }
+
     let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("WebGPU Device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: Default::default(),
         },

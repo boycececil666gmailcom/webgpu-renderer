@@ -22,6 +22,20 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn test_texpresso_bc_compression() {
+        let sizes = [(64, 64), (16, 16), (4, 4), (2, 2), (1, 1)];
+        for (w, h) in sizes {
+            let rgba = vec![255u8; w * h * 4];
+            let fmt = texpresso::Format::Bc1;
+            let sz = fmt.compressed_size(w, h);
+            let mut out = vec![0u8; sz];
+            fmt.compress(&rgba, w, h, texpresso::Params::default(), &mut out);
+            assert_eq!(out.len(), sz);
+            assert!(sz > 0);
+        }
+    }
+
+    #[test]
     fn test_instance_raw_identity() {
         let raw = InstanceRaw::from_transform(Mat4::IDENTITY);
         assert_eq!(raw.model[0][0], 1.0);

@@ -45,6 +45,7 @@ pub struct RenderNode {
     pub instance_count: u32,
     pub mesh_index: usize,
     pub buffer_byte_size: u64,
+    pub min_cam_distance_sq: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -296,12 +297,13 @@ pub struct GltfScene {
 struct MipLevel {
     width: u32,
     height: u32,
-    rgba: Vec<u8>,
+    data: Vec<u8>,
 }
 
 struct TextureData {
     width: u32,
     height: u32,
+    format: wgpu::TextureFormat,
     mips: Vec<MipLevel>,
 }
 // #endregion
@@ -339,16 +341,22 @@ impl GltfScene {
         h
     }
 
-    fn try_load_baked_mips(cache_path: &Path) -> Option<TextureData> {
+    fn try_load_baked_mips(cache_path: &Path, expected_bc: bool) -> Option<TextureData> {
         use std::io::Read;
         let mut file = std::fs::File::open(cache_path).ok()?;
         let mut header = [0u8; 16];
         file.read_exact(&mut header).ok()?;
-        if &header[0..4] != b"MIP0" {
-            return None;
-        }
+        let format = match &header[0..4] {
+            b"BCN1" if expected_bc => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+            b"BCN3" if expected_bc => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+            b"MIP0" | b"MIP1" if !expected_bc => wgpu::TextureFormat::Rgba8UnormSrgb,
+            _ => return None,
+        };
         let base_width = u32::from_le_bytes(header[4..8].try_into().ok()?);
         let base_height = u32::from_le_bytes(header[8..12].try_into().ok()?);
+        if expected_bc && (base_width % 4 != 0 || base_height % 4 != 0) {
+            return None;
+        }
         let mip_count = u32::from_le_bytes(header[12..16].try_into().ok()?);
 
         let mut mips = Vec::with_capacity(mip_count as usize);
@@ -358,12 +366,12 @@ impl GltfScene {
             let mw = u32::from_le_bytes(meta[0..4].try_into().ok()?);
             let mh = u32::from_le_bytes(meta[4..8].try_into().ok()?);
             let byte_len = u32::from_le_bytes(meta[8..12].try_into().ok()?);
-            let mut rgba = vec![0u8; byte_len as usize];
-            file.read_exact(&mut rgba).ok()?;
-            mips.push(MipLevel { width: mw, height: mh, rgba });
+            let mut data = vec![0u8; byte_len as usize];
+            file.read_exact(&mut data).ok()?;
+            mips.push(MipLevel { width: mw, height: mh, data });
         }
 
-        Some(TextureData { width: base_width, height: base_height, mips })
+        Some(TextureData { width: base_width, height: base_height, format, mips })
     }
 
     fn save_baked_mips(cache_path: &Path, data: &TextureData) {
@@ -372,32 +380,64 @@ impl GltfScene {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(mut file) = std::fs::File::create(cache_path) {
-            let _ = file.write_all(b"MIP0");
+            let magic = match data.format {
+                wgpu::TextureFormat::Bc1RgbaUnormSrgb => b"BCN1",
+                wgpu::TextureFormat::Bc3RgbaUnormSrgb => b"BCN3",
+                _ => b"MIP1",
+            };
+            let _ = file.write_all(magic);
             let _ = file.write_all(&data.width.to_le_bytes());
             let _ = file.write_all(&data.height.to_le_bytes());
             let _ = file.write_all(&(data.mips.len() as u32).to_le_bytes());
             for mip in &data.mips {
                 let _ = file.write_all(&mip.width.to_le_bytes());
                 let _ = file.write_all(&mip.height.to_le_bytes());
-                let _ = file.write_all(&(mip.rgba.len() as u32).to_le_bytes());
-                let _ = file.write_all(&mip.rgba);
+                let _ = file.write_all(&(mip.data.len() as u32).to_le_bytes());
+                let _ = file.write_all(&mip.data);
             }
         }
     }
 
-    fn generate_mips_from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> TextureData {
+    fn generate_mips_from_rgba(rgba: Vec<u8>, width: u32, height: u32, use_bc: bool) -> TextureData {
         let mip_level_count = (32 - width.max(height).leading_zeros()).min(8);
         let mut mips = Vec::with_capacity(mip_level_count as usize);
 
         let mut level = image::RgbaImage::from_raw(width, height, rgba)
             .expect("valid RGBA texture dimensions");
 
+        let has_alpha = level.pixels().any(|p| p[3] < 250);
+
+        let (format, bc_format) = if use_bc {
+            if has_alpha {
+                (wgpu::TextureFormat::Bc3RgbaUnormSrgb, Some(texpresso::Format::Bc3))
+            } else {
+                (wgpu::TextureFormat::Bc1RgbaUnormSrgb, Some(texpresso::Format::Bc1))
+            }
+        } else {
+            (wgpu::TextureFormat::Rgba8UnormSrgb, None)
+        };
+
         for mip_level in 0..mip_level_count {
             let (w, h) = level.dimensions();
+
+            let data = if let Some(bc) = bc_format {
+                let sz = bc.compressed_size(w as usize, h as usize);
+                let mut out = vec![0u8; sz];
+                let params = texpresso::Params {
+                    algorithm: texpresso::Algorithm::RangeFit,
+                    weights: texpresso::COLOUR_WEIGHTS_UNIFORM,
+                    weigh_colour_by_alpha: false,
+                };
+                bc.compress(level.as_raw(), w as usize, h as usize, params, &mut out);
+                out
+            } else {
+                level.as_raw().clone()
+            };
+
             mips.push(MipLevel {
                 width: w,
                 height: h,
-                rgba: level.as_raw().clone(),
+                data,
             });
 
             if mip_level + 1 < mip_level_count {
@@ -411,19 +451,27 @@ impl GltfScene {
             }
         }
 
-        TextureData { width, height, mips }
+        TextureData { width, height, format, mips }
     }
 
-    fn downsample_image(img: image::DynamicImage, max_size: u32) -> (Vec<u8>, u32, u32) {
+    fn downsample_image(img: image::DynamicImage, max_size: u32, use_bc: bool) -> (Vec<u8>, u32, u32) {
         let (w, h) = img.dimensions();
         let scaled = if w > max_size || h > max_size {
             let aspect = w as f32 / h as f32;
-            let (target_w, target_h) = if w > h {
+            let (mut target_w, mut target_h) = if w > h {
                 (max_size, (max_size as f32 / aspect).round() as u32)
             } else {
                 ((max_size as f32 * aspect).round() as u32, max_size)
             };
-            img.resize(target_w.max(1), target_h.max(1), image::imageops::FilterType::Triangle)
+            if use_bc {
+                target_w = ((target_w + 3) / 4) * 4;
+                target_h = ((target_h + 3) / 4) * 4;
+            }
+            img.resize_exact(target_w.max(4), target_h.max(4), image::imageops::FilterType::Triangle)
+        } else if use_bc && (w % 4 != 0 || h % 4 != 0) {
+            let target_w = ((w + 3) / 4) * 4;
+            let target_h = ((h + 3) / 4) * 4;
+            img.resize_exact(target_w.max(4), target_h.max(4), image::imageops::FilterType::Triangle)
         } else {
             img
         };
@@ -431,7 +479,13 @@ impl GltfScene {
         (scaled.to_rgba8().into_raw(), nw, nh)
     }
 
-    fn decode_image_data(source: &gltf::image::Source, base_path: Option<&Path>, buffers: &[gltf::buffer::Data], max_size: u32) -> Option<TextureData> {
+    fn decode_image_data(
+        source: &gltf::image::Source,
+        base_path: Option<&Path>,
+        buffers: &[gltf::buffer::Data],
+        max_size: u32,
+        use_bc: bool,
+    ) -> Option<TextureData> {
         let bp = base_path.unwrap_or_else(|| Path::new("."));
         let cache_dir = if bp.join("cache").exists() {
             bp.join("cache")
@@ -450,33 +504,35 @@ impl GltfScene {
                 let end = start + view.length();
                 let raw_bytes = &buffers[view.buffer().index()][start..end];
                 let hash = Self::fnv1a_64(raw_bytes);
-                let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
-                if let Some(baked) = Self::try_load_baked_mips(&cache_file) {
+                let suffix = if use_bc { "bc.mips" } else { "mips" };
+                let cache_file = cache_dir.join(format!("{hash:016x}.{suffix}"));
+                if let Some(baked) = Self::try_load_baked_mips(&cache_file, use_bc) {
                     return Some(baked);
                 }
 
                 let decoded = image::load_from_memory(raw_bytes).ok()?;
-                let (rgba, width, height) = Self::downsample_image(decoded, max_size);
-                let tex = Self::generate_mips_from_rgba(rgba, width, height);
+                let (rgba, width, height) = Self::downsample_image(decoded, max_size, use_bc);
+                let tex = Self::generate_mips_from_rgba(rgba, width, height, use_bc);
                 Self::save_baked_mips(&cache_file, &tex);
                 Some(tex)
             }
             gltf::image::Source::Uri { uri, .. } => {
                 let path = base_path.unwrap_or_else(|| Path::new(".")).join(uri);
+                let suffix = if use_bc { "bc.mips" } else { "mips" };
                 if let Ok(raw_bytes) = std::fs::read(&path) {
                     let hash = Self::fnv1a_64(&raw_bytes);
-                    let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
-                    if let Some(baked) = Self::try_load_baked_mips(&cache_file) {
+                    let cache_file = cache_dir.join(format!("{hash:016x}.{suffix}"));
+                    if let Some(baked) = Self::try_load_baked_mips(&cache_file, use_bc) {
                         return Some(baked);
                     }
                 }
 
                 let decoded = image::open(&path).ok()?;
-                let (rgba, width, height) = Self::downsample_image(decoded, max_size);
-                let tex = Self::generate_mips_from_rgba(rgba, width, height);
+                let (rgba, width, height) = Self::downsample_image(decoded, max_size, use_bc);
+                let tex = Self::generate_mips_from_rgba(rgba, width, height, use_bc);
                 if let Ok(raw_bytes) = std::fs::read(&path) {
                     let hash = Self::fnv1a_64(&raw_bytes);
-                    let cache_file = cache_dir.join(format!("{hash:016x}.mips"));
+                    let cache_file = cache_dir.join(format!("{hash:016x}.{suffix}"));
                     Self::save_baked_mips(&cache_file, &tex);
                 }
                 Some(tex)
@@ -489,9 +545,10 @@ impl GltfScene {
         base_path: Option<&Path>,
         buffers: &[gltf::buffer::Data],
         max_size: u32,
+        use_bc: bool,
     ) -> Vec<Option<TextureData>> {
         doc.textures()
-            .map(|tex| Self::decode_image_data(&tex.source().source(), base_path, buffers, max_size))
+            .map(|tex| Self::decode_image_data(&tex.source().source(), base_path, buffers, max_size, use_bc))
             .collect()
     }
 
@@ -506,12 +563,40 @@ impl GltfScene {
             mip_level_count: data.mips.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: data.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
+        let is_bc = matches!(
+            data.format,
+            wgpu::TextureFormat::Bc1RgbaUnormSrgb | wgpu::TextureFormat::Bc3RgbaUnormSrgb
+        );
+        let block_bytes = match data.format {
+            wgpu::TextureFormat::Bc1RgbaUnormSrgb => 8u32,
+            wgpu::TextureFormat::Bc3RgbaUnormSrgb => 16u32,
+            _ => 4u32,
+        };
+
         for (mip_level, mip) in data.mips.iter().enumerate() {
+            let (write_w, write_h, bytes_per_row, rows_per_image) = if is_bc {
+                let blocks_x = (mip.width + 3) / 4;
+                let blocks_y = (mip.height + 3) / 4;
+                (
+                    blocks_x * 4,
+                    blocks_y * 4,
+                    Some(blocks_x * block_bytes),
+                    Some(blocks_y),
+                )
+            } else {
+                (
+                    mip.width,
+                    mip.height,
+                    Some(4 * mip.width),
+                    Some(mip.height),
+                )
+            };
+
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &texture,
@@ -519,15 +604,15 @@ impl GltfScene {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &mip.rgba,
+                &mip.data,
                 wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(4 * mip.width),
-                    rows_per_image: Some(mip.height),
+                    bytes_per_row,
+                    rows_per_image,
                 },
                 wgpu::Extent3d {
-                    width: mip.width,
-                    height: mip.height,
+                    width: write_w,
+                    height: write_h,
                     depth_or_array_layers: 1,
                 },
             );
@@ -815,6 +900,7 @@ impl GltfScene {
                     instance_count: 1,
                     mesh_index,
                     buffer_byte_size: std::mem::size_of::<InstanceRaw>() as u64,
+                    min_cam_distance_sq: 0.0,
                 });
 
                 if let Some(&(min, max)) = mesh_bounds.get(mesh_index) {
@@ -1156,7 +1242,8 @@ impl GltfScene {
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
-        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_texture_size);
+        let use_bc = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_texture_size, use_bc);
         let mat_offset = materials.len();
         let mut new_materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, default_view, default_sampler);
         materials.append(&mut new_materials);
@@ -1355,6 +1442,7 @@ impl GltfScene {
                                 instance_count: 0,
                                 mesh_index: proto_mesh_idx,
                                 buffer_byte_size: max_byte_size.max(64),
+                                min_cam_distance_sq: f32::MAX,
                             });
                             lod_levels.push(ScatterLodLevel {
                                 mesh_index: proto_mesh_idx,
@@ -1429,6 +1517,7 @@ impl GltfScene {
                             instance_count: raw_transforms.len() as u32,
                             mesh_index: proto_mesh_idx,
                             buffer_byte_size,
+                            min_cam_distance_sq: 0.0,
                         });
                     }
                     Err(e) => {
@@ -1474,7 +1563,7 @@ impl GltfScene {
             group.last_eval_cam = Some((cam_pos, frustum_planes, aspect, yfov));
 
             let lod_count = group.lods.len();
-            let mut buckets: Vec<Vec<InstanceRaw>> = vec![Vec::new(); lod_count];
+            let mut buckets: Vec<Vec<(f32, InstanceRaw)>> = vec![Vec::new(); lod_count];
             let mut culled_count = 0usize;
 
             for inst in &group.instances {
@@ -1489,7 +1578,7 @@ impl GltfScene {
                 let dist = inst.position.distance(cam_pos);
                 if dist <= 1e-4 {
                     if let Some(b) = buckets.first_mut() {
-                        b.push(inst.transform);
+                        b.push((dist, inst.transform));
                     }
                     continue;
                 }
@@ -1506,18 +1595,24 @@ impl GltfScene {
                 let mut assigned = false;
                 for (lod_idx, lod) in group.lods.iter().enumerate() {
                     if coverage_pct >= lod.min_screen_coverage_percent {
-                        buckets[lod_idx].push(inst.transform);
+                        buckets[lod_idx].push((dist, inst.transform));
                         assigned = true;
                         break;
                     }
                 }
                 if !assigned {
                     if let Some(b) = buckets.last_mut() {
-                        b.push(inst.transform);
+                        b.push((dist, inst.transform));
                     } else {
                         culled_count += 1;
                     }
                 }
+            }
+
+            // Front-to-Back sorting: instances within each LOD bucket sorted closest to farthest
+            // to maximize Early-Z hardware rejection during instanced draw calls
+            for bucket in &mut buckets {
+                bucket.sort_by(|a, b| a.0.total_cmp(&b.0));
             }
 
             let mut log_stats = Vec::new();
@@ -1525,8 +1620,10 @@ impl GltfScene {
                 let bucket = &buckets[lod_idx];
                 let node = &mut self.render_nodes[lod.render_node_index];
                 node.instance_count = bucket.len() as u32;
+                node.min_cam_distance_sq = bucket.first().map(|(d, _)| d * d).unwrap_or(f32::MAX);
                 if !bucket.is_empty() {
-                    queue.write_buffer(&node.instance_buffer, 0, bytemuck::cast_slice(bucket));
+                    let raw_transforms: Vec<InstanceRaw> = bucket.iter().map(|(_, raw)| *raw).collect();
+                    queue.write_buffer(&node.instance_buffer, 0, bytemuck::cast_slice(&raw_transforms));
                 }
                 log_stats.push(format!("LOD{}: {}", lod_idx, bucket.len()));
             }
@@ -1556,10 +1653,11 @@ impl GltfScene {
         let (path, base) = (path.as_ref(), path.as_ref().parent().unwrap_or_else(|| Path::new(".")));
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
-        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_tex);
+        let use_bc = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_tex, use_bc);
         let vram_texture_bytes: u64 = textures
             .iter()
-            .map(|td| td.as_ref().map_or(0, |t| t.mips.iter().map(|m| m.rgba.len() as u64).sum::<u64>()))
+            .map(|td| td.as_ref().map_or(0, |t| t.mips.iter().map(|m| m.data.len() as u64).sum::<u64>()))
             .sum();
         crate::telemetry::log_info("GltfLoader", "Load", &format!("Reading glTF scene: {}", path.display()));
         let mut materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, view, sampler);

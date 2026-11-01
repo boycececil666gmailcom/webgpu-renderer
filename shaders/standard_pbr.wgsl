@@ -76,22 +76,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    var base_color = mat.base_color;
-    if (mat.use_texture == 1u) {
-        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
-    }
-
-    if (mat.alpha_mode == 0u) {
-        base_color.a = 1.0;
-    } else if (mat.alpha_mode == 1u) {
-        if (base_color.a < mat.alpha_cutoff) {
-            discard;
-        }
-        base_color.a = 1.0;
-    }
-
+fn evaluate_lighting(in: VertexOutput, is_front: bool, base_color: vec4<f32>) -> vec4<f32> {
     if (mat.is_unlit == 1u) {
         return base_color;
     }
@@ -130,4 +115,58 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     }
 
     return vec4<f32>(total_ibl, base_color.a);
+}
+
+// Full Early-Z with immediate hardware depth writes (ZERO discard instructions)
+@fragment
+fn fs_opaque(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    var base_color = mat.base_color;
+    if (mat.use_texture == 1u) {
+        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
+    }
+    base_color.a = 1.0;
+    return evaluate_lighting(in, is_front, base_color);
+}
+
+// Alpha-tested foliage / cutout (evaluated after solid opaque has primed Z-buffer)
+@fragment
+fn fs_masked(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    var base_color = mat.base_color;
+    if (mat.use_texture == 1u) {
+        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
+    }
+    if (base_color.a < mat.alpha_cutoff) {
+        discard;
+    }
+    base_color.a = 1.0;
+    return evaluate_lighting(in, is_front, base_color);
+}
+
+// Alpha-blended transparent materials (rendered back-to-front with depth write disabled)
+@fragment
+fn fs_transparent(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    var base_color = mat.base_color;
+    if (mat.use_texture == 1u) {
+        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
+    }
+    return evaluate_lighting(in, is_front, base_color);
+}
+
+@fragment
+fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    var base_color = mat.base_color;
+    if (mat.use_texture == 1u) {
+        base_color = base_color * textureSample(mat_texture, mat_sampler, in.tex_coords);
+    }
+
+    if (mat.alpha_mode == 0u) {
+        base_color.a = 1.0;
+    } else if (mat.alpha_mode == 1u) {
+        if (base_color.a < mat.alpha_cutoff) {
+            discard;
+        }
+        base_color.a = 1.0;
+    }
+
+    return evaluate_lighting(in, is_front, base_color);
 }
