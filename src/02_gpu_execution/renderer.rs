@@ -4,22 +4,18 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 
-use crate::preprocessing::gltf_loader::{GltfScene, GpuPrimitive, RenderNode, SceneLight};
+use crate::preprocessing::gltf_loader::{GltfScene, GpuPrimitive, RenderNode};
 use crate::preprocessing::material::Material;
 use crate::preprocessing::telemetry::log_info;
 // #endregion
 
 // #region Types
-const LIGHT_INTENSITY_NORMALIZATION: f32 = 1000.0;
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FrameUniforms {
     pub view: [[f32; 4]; 4],
     pub projection: [[f32; 4]; 4],
     pub cam_pos: [f32; 4],
-    pub light_dir: [f32; 4],
-    pub light_color: [f32; 4],
 }
 
 pub struct Renderer {
@@ -176,15 +172,71 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: &str,
+        env_intensity: f32,
     ) -> (wgpu::TextureView, wgpu::Sampler) {
         let loaded = std::fs::read(path).ok().and_then(|bytes| {
-            image::load_from_memory(&bytes).ok().map(|img| img.to_rgba8())
+            image::load_from_memory(&bytes).ok()
         });
 
         let (width, height, rgba) = match loaded {
-            Some(img) => {
+            Some(image::DynamicImage::ImageRgb32F(img)) => {
                 let (w, h) = img.dimensions();
-                crate::telemetry::log_info("Renderer", "IBL", &format!("Loaded environment map '{path}' ({w}x{h})"));
+                let effective_scale = if env_intensity > 0.0 { env_intensity } else { 10.0 };
+                crate::telemetry::log_info("Renderer", "IBL", &format!("Loaded HDR environment map '{path}' ({w}x{h}) with Reinhard tone mapping and sRGB encoding (scale {effective_scale}x)"));
+                let mut out = Vec::with_capacity((w * h * 4) as usize);
+                for pixel in img.pixels() {
+                    let r = pixel[0] * effective_scale;
+                    let g = pixel[1] * effective_scale;
+                    let b = pixel[2] * effective_scale;
+                    let r_tm = r / (1.0 + r);
+                    let g_tm = g / (1.0 + g);
+                    let b_tm = b / (1.0 + b);
+                    let to_srgb = |c: f32| -> u8 {
+                        let s = if c <= 0.0031308 {
+                            c * 12.92
+                        } else {
+                            1.055 * c.powf(1.0 / 2.4) - 0.055
+                        };
+                        (s * 255.0).clamp(0.0, 255.0).round() as u8
+                    };
+                    out.push(to_srgb(r_tm));
+                    out.push(to_srgb(g_tm));
+                    out.push(to_srgb(b_tm));
+                    out.push(255);
+                }
+                (w, h, out)
+            }
+            Some(image::DynamicImage::ImageRgba32F(img)) => {
+                let (w, h) = img.dimensions();
+                let effective_scale = if env_intensity > 0.0 { env_intensity } else { 10.0 };
+                crate::telemetry::log_info("Renderer", "IBL", &format!("Loaded HDR environment map '{path}' ({w}x{h}) with Reinhard tone mapping and sRGB encoding (scale {effective_scale}x)"));
+                let mut out = Vec::with_capacity((w * h * 4) as usize);
+                for pixel in img.pixels() {
+                    let r = pixel[0] * effective_scale;
+                    let g = pixel[1] * effective_scale;
+                    let b = pixel[2] * effective_scale;
+                    let r_tm = r / (1.0 + r);
+                    let g_tm = g / (1.0 + g);
+                    let b_tm = b / (1.0 + b);
+                    let to_srgb = |c: f32| -> u8 {
+                        let s = if c <= 0.0031308 {
+                            c * 12.92
+                        } else {
+                            1.055 * c.powf(1.0 / 2.4) - 0.055
+                        };
+                        (s * 255.0).clamp(0.0, 255.0).round() as u8
+                    };
+                    out.push(to_srgb(r_tm));
+                    out.push(to_srgb(g_tm));
+                    out.push(to_srgb(b_tm));
+                    out.push(255);
+                }
+                (w, h, out)
+            }
+            Some(ldr_img) => {
+                let img = ldr_img.to_rgba8();
+                let (w, h) = img.dimensions();
+                crate::telemetry::log_info("Renderer", "IBL", &format!("Loaded LDR environment map '{path}' ({w}x{h})"));
                 (w, h, img.into_raw())
             }
             None => {
@@ -480,18 +532,11 @@ impl Renderer {
         }
     }
 
-    fn update_frame_uniforms(&self, view: Mat4, projection: Mat4, light: &SceneLight, cam_pos: Vec3) {
+    fn update_frame_uniforms(&self, view: Mat4, projection: Mat4, cam_pos: Vec3) {
         let frame_uniforms = FrameUniforms {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
-            light_dir: [light.direction.x, light.direction.y, light.direction.z, 0.0],
-            light_color: [
-                light.color[0],
-                light.color[1],
-                light.color[2],
-                light.intensity / LIGHT_INTENSITY_NORMALIZATION,
-            ],
         };
         self.queue.write_buffer(
             &self.frame_buffer,
@@ -503,6 +548,9 @@ impl Renderer {
     fn build_transparent_draws(&mut self, view: Mat4, scene: &GltfScene) {
         self.transparent_draws.clear();
         for (node_index, node) in scene.render_nodes.iter().enumerate() {
+            if node.instance_count == 0 {
+                continue;
+            }
             let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
                 continue;
             };
@@ -533,8 +581,12 @@ impl Renderer {
         output_view: &wgpu::TextureView,
         view: Mat4,
         scene: &GltfScene,
-    ) {
+    ) -> crate::preprocessing::telemetry::FrameStats {
         self.build_transparent_draws(view, scene);
+
+        let mut draw_calls = 0u32;
+        let mut triangles_drawn = 0u64;
+        let mut instances_drawn = 0u32;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Main Render Pass"),
@@ -561,20 +613,29 @@ impl Renderer {
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
         for node in &scene.render_nodes {
+            if node.instance_count == 0 {
+                continue;
+            }
             let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
                 continue;
             };
+            instances_drawn += node.instance_count;
             for prim in primitives {
                 let material = &scene.materials[prim.material_index];
                 if material.is_transparent {
                     continue;
                 }
                 draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
+                draw_calls += 1;
+                triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
             }
         }
 
         for &(_, node_index, prim_index) in &self.transparent_draws {
             let node = &scene.render_nodes[node_index];
+            if node.instance_count == 0 {
+                continue;
+            }
             let Some(primitives) = scene.primitives_by_mesh.get(node.mesh_index) else {
                 continue;
             };
@@ -583,7 +644,21 @@ impl Renderer {
             };
             let material = &scene.materials[prim.material_index];
             draw_primitive(&mut render_pass, self.pipeline_for(material), node, prim, material);
+            draw_calls += 1;
+            triangles_drawn += (prim.count as u64 / 3) * (node.instance_count as u64);
         }
+
+        crate::preprocessing::telemetry::FrameStats {
+            draw_calls,
+            triangles_drawn,
+            instances_drawn,
+        }
+    }
+
+    pub fn render_target_vram_bytes(&self) -> u64 {
+        let (w, h) = self.depth_size;
+        // Color buffer (RGBA8: 4 bytes) + Depth buffer (Depth24Plus: 4 bytes)
+        (w as u64) * (h as u64) * 8
     }
 }
 
@@ -594,6 +669,9 @@ fn draw_primitive(
     prim: &GpuPrimitive,
     material: &Material,
 ) {
+    if node.instance_count == 0 {
+        return;
+    }
     render_pass.set_pipeline(pipeline);
     render_pass.set_bind_group(1, &material.bind_group, &[]);
     render_pass.set_vertex_buffer(0, prim.pos_buffer.slice(..));
@@ -620,11 +698,12 @@ impl Renderer {
         height: u32,
         shader_source: &str,
         env_map_path: &str,
+        env_intensity: f32,
     ) -> Self {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
         let (default_view, default_sampler) = Self::create_default_texture(&device, &queue);
-        let (env_view, env_sampler) = Self::load_environment_texture(&device, &queue, env_map_path);
+        let (env_view, env_sampler) = Self::load_environment_texture(&device, &queue, env_map_path, env_intensity);
         let (bgl_frame, bgl_mat) = Self::create_bind_group_layouts(&device);
         let (frame_buffer, frame_bind_group) = Self::create_frame_uniforms(&device, &bgl_frame, &env_view, &env_sampler);
         let (
@@ -695,19 +774,19 @@ impl Renderer {
         output: &wgpu::TextureView,
         view: Mat4,
         proj: Mat4,
-        light: &SceneLight,
         cam_pos: Vec3,
         scene: &GltfScene,
-    ) {
-        self.update_frame_uniforms(view, proj, light, cam_pos);
+    ) -> crate::preprocessing::telemetry::FrameStats {
+        self.update_frame_uniforms(view, proj, cam_pos);
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Frame Command Encoder"),
         });
-        self.record_render_pass(&mut enc, output, view, scene);
+        let stats = self.record_render_pass(&mut enc, output, view, scene);
         let submission = self.queue.submit(std::iter::once(enc.finish()));
         // The Android emulator Vulkan path can present frames with missing draws
         // while submissions overlap. Complete this frame before presenting it.
         self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
+        stats
     }
 }
 // #endregion

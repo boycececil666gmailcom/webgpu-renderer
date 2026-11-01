@@ -2,8 +2,6 @@ struct FrameUniforms {
     view: mat4x4<f32>,
     projection: mat4x4<f32>,
     cam_pos: vec4<f32>,
-    light_dir: vec4<f32>,
-    light_color: vec4<f32>,
 };
 
 struct MaterialUniforms {
@@ -103,47 +101,10 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         norm = -norm;
     }
     let view_dir = normalize(frame.cam_pos.xyz - in.world_pos);
-    let light_dir = normalize(frame.light_dir.xyz);
-    let radiance = frame.light_color.rgb * frame.light_color.a;
-    let half_dir = normalize(light_dir + view_dir);
-
-    let n_dot_l = max(dot(norm, light_dir), 0.0);
     let n_dot_v = max(dot(norm, view_dir), 0.001);
-    let n_dot_h = max(dot(norm, half_dir), 0.0);
-    let v_dot_h = max(dot(view_dir, half_dir), 0.0);
 
     let f0 = mix(vec3<f32>(0.04), base_color.rgb, mat.metallic);
-    let fresnel = f0 + (1.0 - f0) * pow(clamp(1.0 - v_dot_h, 0.0, 1.0), 5.0);
-
     let rough = max(mat.roughness, 0.04);
-    let alpha = rough * rough;
-    let alpha2 = alpha * alpha;
-    let denom = (n_dot_h * n_dot_h * (alpha2 - 1.0) + 1.0);
-    let d = alpha2 / (3.14159265 * denom * denom);
-
-    let k = (rough + 1.0) * (rough + 1.0) / 8.0;
-    let g1 = n_dot_v / (n_dot_v * (1.0 - k) + k);
-    let g2 = n_dot_l / (n_dot_l * (1.0 - k) + k);
-    let g = g1 * g2;
-
-    let specular_brdf = (d * g * fresnel) / max(4.0 * n_dot_v * n_dot_l, 0.001);
-    let kd = (vec3<f32>(1.0) - fresnel) * (1.0 - mat.metallic);
-    let diffuse_brdf = kd * base_color.rgb / 3.14159265;
-
-    var direct_light = (diffuse_brdf + specular_brdf) * n_dot_l * 3.14159265 * radiance;
-
-    if (mat.clearcoat > 0.0) {
-        let cc_rough = 0.1;
-        let cc_alpha = cc_rough * cc_rough;
-        let cc_alpha2 = cc_alpha * cc_alpha;
-        let cc_denom = (n_dot_h * n_dot_h * (cc_alpha2 - 1.0) + 1.0);
-        let cc_d = cc_alpha2 / (3.14159265 * cc_denom * cc_denom);
-        let cc_fresnel = 0.04 + 0.96 * pow(clamp(1.0 - v_dot_h, 0.0, 1.0), 5.0);
-        let cc_k = (cc_rough + 1.0) * (cc_rough + 1.0) / 8.0;
-        let cc_g = (n_dot_v / (n_dot_v * (1.0 - cc_k) + cc_k)) * (n_dot_l / (n_dot_l * (1.0 - cc_k) + cc_k));
-        let cc_spec = (cc_d * cc_g * cc_fresnel) / max(4.0 * n_dot_v * n_dot_l, 0.001);
-        direct_light = direct_light * (1.0 - cc_fresnel * mat.clearcoat) + vec3<f32>(cc_spec * n_dot_l * mat.clearcoat) * radiance;
-    }
 
     // --- Image-Based Lighting (IBL) ---
     // Diffuse IBL: hemispherical irradiance filtered at top mip levels
@@ -168,7 +129,5 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         total_ibl = total_ibl * (1.0 - cc_fresnel_env * mat.clearcoat) + cc_ibl;
     }
 
-    let final_color = total_ibl + direct_light;
-
-    return vec4<f32>(final_color, base_color.a);
+    return vec4<f32>(total_ibl, base_color.a);
 }

@@ -152,7 +152,7 @@ def run():
         for obj in car_coll.all_objects:
             obj.select_set(True)
             
-    for name in ["ENV_Road_Asphalt_ClosedLoop", "ENV_Terrain_Forest_Floor_Layered", "ENV_Sky_Dome", "CAM_Scene_Follow", "Sun"]:
+    for name in ["ENV_Road_Asphalt_ClosedLoop", "ENV_Terrain_Forest_Floor_Layered", "ENV_Sky_Dome", "CAM_Scene_Follow"]:
         o = bpy.data.objects.get(name)
         if o:
             o.select_set(True)
@@ -169,7 +169,7 @@ def run():
         export_materials='EXPORT',
         export_image_format='AUTO',
         export_cameras=True,
-        export_lights=True
+        export_lights=False
     )
     print(f"[REFINE] Exported {glb_path} ({os.path.getsize(glb_path)} bytes).")
 

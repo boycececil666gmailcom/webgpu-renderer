@@ -1,0 +1,8 @@
+{
+  "target_fps": 60,
+  "model": "base_scene.glb",
+  "env_map": "je_gray_02_1k.exr",
+  "env_map_intensity": 10.0,
+  "scatter_config": "scatter.json",
+  "max_texture_size": 4096
+}

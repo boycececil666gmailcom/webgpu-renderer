@@ -21,8 +21,7 @@ class SceneConfig:
         "ENV_Road_Asphalt_ClosedLoop",
         "ENV_Terrain_Forest_Floor_Layered",
         "ENV_Sky_Dome",
-        "CAM_Scene_Follow",
-        "Sun"
+        "CAM_Scene_Follow"
     ]
 #endregion
 
@@ -103,7 +102,7 @@ def save_and_export_glb():
         export_materials='EXPORT',
         export_image_format='AUTO',
         export_cameras=True,
-        export_lights=True
+        export_lights=False
     )
     log_step(f"Successfully exported {SceneConfig.GLB_PATH}")
 #endregion

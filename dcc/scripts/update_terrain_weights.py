@@ -21,12 +21,9 @@ if not color_attr:
 mat = terrain.matrix_world
 
 # Vertex group references
-vg_scatter = terrain.vertex_groups.get("Scatter_Density")
-if not vg_scatter:
-    vg_scatter = terrain.vertex_groups.new(name="Scatter_Density")
-vg_undergrowth = terrain.vertex_groups.get("Undergrowth_Density")
-if not vg_undergrowth:
-    vg_undergrowth = terrain.vertex_groups.new(name="Undergrowth_Density")
+vg_canopy = terrain.vertex_groups.get("Canopy_Trees") or terrain.vertex_groups.get("Scatter_Density") or terrain.vertex_groups.new(name="Canopy_Trees")
+vg_undergrowth = terrain.vertex_groups.get("Undergrowth") or terrain.vertex_groups.get("Undergrowth_Density") or terrain.vertex_groups.new(name="Undergrowth")
+vg_verge = terrain.vertex_groups.get("Road_Verge") or terrain.vertex_groups.get("Verge_Density") or terrain.vertex_groups.new(name="Road_Verge")
 
 updated = 0
 for i, v in enumerate(mesh.vertices):
@@ -113,8 +110,9 @@ for i, v in enumerate(mesh.vertices):
     val_b = max(0.0, min(1.0, base_b * rock_cam_clear))
     
     color_attr.data[i].color = (val_r, val_g, val_b, 1.0)
-    vg_scatter.add([i], val_r, 'REPLACE')
+    vg_canopy.add([i], val_r, 'REPLACE')
     vg_undergrowth.add([i], val_g, 'REPLACE')
+    vg_verge.add([i], val_b, 'REPLACE')
     updated += 1
 
 print(f"Updated {updated} vertices on {terrain.name}")

@@ -140,15 +140,25 @@ fn take_loaded_scene(state: &mut RenderState) {
     match receiver.try_recv() {
         Ok(Ok(scene)) => {
             let primitive_count: usize = scene.primitives_by_mesh.iter().map(|primitives| primitives.len()).sum();
+            let total_tris = scene.total_scene_triangles();
+            let total_insts = scene.total_scene_instances();
+            let geom_bytes = scene.total_vram_geometry();
+            let tex_bytes = scene.vram_texture_bytes;
+            let rt_bytes = state.renderer.render_target_vram_bytes();
+
             state.telemetry.set_scene_stats(
                 scene.primitives_by_mesh.len(),
-                scene.render_nodes.len(),
+                total_insts,
+                total_tris,
                 primitive_count,
                 scene.materials.len(),
             );
+            state.telemetry.set_vram_metrics(geom_bytes, tex_bytes, rt_bytes);
+
             log_info("Engine", "Load", &format!(
-                "Scene ready: {} meshes | {} instances | {} materials",
-                scene.primitives_by_mesh.len(), scene.render_nodes.len(), scene.materials.len()
+                "Scene ready: {} meshes | {} total instances | {} triangles | {} materials | VRAM: {:.1} MB",
+                scene.primitives_by_mesh.len(), total_insts, total_tris, scene.materials.len(),
+                (geom_bytes + tex_bytes + rt_bytes) as f32 / (1024.0 * 1024.0)
             ));
             state.scene = Some(scene);
             state.scene_rx = None;
@@ -235,12 +245,20 @@ fn init_render_state(
         height,
         include_str!("../shaders/standard_pbr.wgsl"),
         &config.default_env_map,
+        config.env_map_intensity,
     );
 
     let scene_rx = spawn_scene_load(&renderer, config.default_model.clone(), config.scatter_config.clone(), config.max_texture_size)?;
 
     let mut telemetry = TelemetryTracker::new();
     telemetry.set_resolution(width, height);
+    let adapter_info = adapter.get_info();
+    telemetry.set_gpu_info(
+        adapter_info.name,
+        format!("{:?}", adapter_info.backend),
+        format!("{:?}", adapter_info.device_type),
+        adapter_info.driver,
+    );
 
     log_info("Engine", "Lifecycle", &format!(
         "Pipeline ready: {}x{} ({:?}). Streaming '{}' on background thread (max texture {}px).",
@@ -295,15 +313,18 @@ fn handle_window_event(
                         let aspect = swapchain.aspect_ratio();
 
                         // Step 1: Pre-processing (CPU-centered scene preparation, frustum/LOD culling)
+                        let mut frame_stats = crate::preprocessing::FrameStats::default();
                         if let Some(scene) = scene.as_mut() {
-                            scene.update_lods(&renderer.queue, scene.camera.position(), aspect, scene.camera.yfov);
+                            let view_mat = scene.camera.view_matrix();
+                            let proj_mat = scene.camera.projection_matrix(aspect);
+                            let frustum = crate::preprocessing::Frustum::from_view_projection(proj_mat * view_mat);
+                            scene.update_lods(&renderer.queue, scene.camera.position(), aspect, scene.camera.yfov, Some(&frustum));
 
                             // Step 2: GPU Execution (GPU draw calls and rasterization pass)
-                            renderer.render_frame(
+                            frame_stats = renderer.render_frame(
                                 &view,
-                                scene.camera.view_matrix(),
-                                scene.camera.projection_matrix(aspect),
-                                &scene.light,
+                                view_mat,
+                                proj_mat,
                                 scene.camera.position(),
                                 scene,
                             );
@@ -323,7 +344,7 @@ fn handle_window_event(
 
                         // Step 4: Presentation (Swapchain present and display metrics)
                         swapchain.present_frame(output);
-                        telemetry.record_frame(frame_start.elapsed());
+                        telemetry.record_frame(frame_start.elapsed(), frame_stats);
                     }
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         swapchain.reconfigure(&renderer.device);

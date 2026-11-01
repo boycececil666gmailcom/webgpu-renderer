@@ -105,8 +105,7 @@ def export_modular_assets() -> None:
         "ENV_Road_Asphalt_ClosedLoop",
         "ENV_Terrain_Forest_Floor_Layered",
         "ENV_Sky_Dome",
-        "CAM_Scene_Follow",
-        "Sun"
+        "CAM_Scene_Follow"
     ]:
         o = bpy.data.objects.get(name)
         if o:
@@ -120,7 +119,7 @@ def export_modular_assets() -> None:
         export_materials='EXPORT',
         export_image_format='AUTO',
         export_cameras=True,
-        export_lights=True,
+        export_lights=False,
     )
     log_step(f"Exported main scene: {base_scene_glb}")
 #endregion

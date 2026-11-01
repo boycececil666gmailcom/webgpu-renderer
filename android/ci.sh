@@ -142,7 +142,7 @@ build_and_package() {
     rm -rf "$tmp" && mkdir -p "$tmp" "$(dirname "$apk")"
 
     "$AAPT2" link -I "$JAR" --manifest "$SCRIPT_DIR/AndroidManifest.xml" -o "$tmp/unsigned.apk"
-    python -c "import zipfile, sys; z = zipfile.ZipFile(sys.argv[1], 'a'); z.write(sys.argv[2], sys.argv[3]); z.close()" "$tmp/unsigned.apk" "$so" "lib/arm64-v8a/libwebgpu_engine.so"
+    python -c "import zipfile, sys, glob, os; z = zipfile.ZipFile(sys.argv[1], 'a'); z.write(sys.argv[2], 'lib/arm64-v8a/libwebgpu_engine.so'); [z.write(f, 'assets/config/' + os.path.basename(f)) for f in glob.glob(os.path.join(sys.argv[3], 'config', '*.json'))]; [z.write(f, 'assets/textures/' + os.path.basename(f)) for f in glob.glob(os.path.join(sys.argv[3], 'assets', 'textures', '*')) if os.path.isfile(f)]; [z.write(f, 'assets/models/' + os.path.basename(f)) for f in glob.glob(os.path.join(sys.argv[3], 'assets', 'models', '*.glb'))]; z.close()" "$tmp/unsigned.apk" "$so" "$PROJECT_ROOT"
     "$ZIPALIGN" -f -p 4 "$tmp/unsigned.apk" "$tmp/aligned.apk"
     java -jar "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass pass:android --out "$apk" "$tmp/aligned.apk"
     rm -rf "$tmp"
@@ -176,8 +176,12 @@ deploy_app() {
     for glb in "$PROJECT_ROOT"/assets/models/*.glb; do
         [ -f "$glb" ] && sync_file "$glb"
     done
-    sync_file "$PROJECT_ROOT/config/scatter.json"
-    sync_file "$PROJECT_ROOT/assets/textures/autumn_forest_01_1k.png"
+    for tex in "$PROJECT_ROOT"/assets/textures/*; do
+        [ -f "$tex" ] && sync_file "$tex"
+    done
+    for cfg in "$PROJECT_ROOT"/config/*.json; do
+        [ -f "$cfg" ] && sync_file "$cfg"
+    done
 }
 
 stream_telemetry() {

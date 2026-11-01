@@ -30,9 +30,10 @@ pub use swapchain as presentation;
 pub use config::Config;
 pub use gpu_execution::renderer::{self, FrameUniforms, Renderer};
 pub use post_processing::postprocess::{self, PostProcessor};
+pub use preprocessing::culling::{self, Frustum, FrustumPlane};
 pub use preprocessing::gltf_loader::{self, GltfScene};
 pub use preprocessing::material::{self, Material, MaterialUniforms};
-pub use preprocessing::telemetry::{self, log_error, log_info, log_warn, TelemetryTracker};
+pub use preprocessing::telemetry::{self, log_error, log_info, log_warn, FrameStats, GpuInfo, TelemetryTracker, VramMetrics};
 pub use swapchain::Swapchain;
 // #endregion
 

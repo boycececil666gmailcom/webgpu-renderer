@@ -43,6 +43,7 @@ fn test_render_capture_frame() {
         view_formats: &[],
     });
 
+    let config = webgpu_engine::Config::load();
     let target_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let mut renderer = Renderer::new(
         device,
@@ -51,29 +52,32 @@ fn test_render_capture_frame() {
         width,
         height,
         include_str!("../shaders/standard_pbr.wgsl"),
-        "assets/textures/autumn_forest_01_1k.png",
+        &config.default_env_map,
+        config.env_map_intensity,
     );
 
     let mut scene = GltfScene::load(
-        "assets/models/base_scene.glb",
-        Some("config/scatter.json"),
+        &config.default_model,
+        config.scatter_config.as_deref(),
         &renderer.device,
         &renderer.queue,
         &renderer.bgl_mat,
         &renderer.default_view,
         &renderer.default_sampler,
-        4096,
+        config.max_texture_size,
     )
     .expect("Failed to load scene");
 
     let aspect = width as f32 / height as f32;
-    scene.update_lods(&renderer.queue, scene.camera.position(), aspect, scene.camera.yfov);
+    let view_mat = scene.camera.view_matrix();
+    let proj_mat = scene.camera.projection_matrix(aspect);
+    let frustum = webgpu_engine::preprocessing::Frustum::from_view_projection(proj_mat * view_mat);
+    scene.update_lods(&renderer.queue, scene.camera.position(), aspect, scene.camera.yfov, Some(&frustum));
 
     renderer.render_frame(
         &target_view,
-        scene.camera.view_matrix(),
-        scene.camera.projection_matrix(aspect),
-        &scene.light,
+        view_mat,
+        proj_mat,
         scene.camera.position(),
         &scene,
     );

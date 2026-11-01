@@ -5,6 +5,7 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
+use super::culling::{Frustum, FrustumPlane};
 use super::material::Material;
 // #endregion
 
@@ -34,6 +35,7 @@ pub struct GpuPrimitive {
     pub count: u32,
     pub material_index: usize,
     pub center: Vec3,
+    pub byte_size: u64,
 }
 
 pub struct RenderNode {
@@ -42,6 +44,7 @@ pub struct RenderNode {
     pub instance_buffer: wgpu::Buffer,
     pub instance_count: u32,
     pub mesh_index: usize,
+    pub buffer_byte_size: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -270,7 +273,7 @@ pub struct ScatterLodGroup {
     pub instances: Vec<ScatterInstanceItem>,
     pub lods: Vec<ScatterLodLevel>,
     pub cull_screen_coverage_percent: f32,
-    pub last_eval_cam: Option<(Vec3, f32, f32)>,
+    pub last_eval_cam: Option<(Vec3, Option<[FrustumPlane; 6]>, f32, f32)>,
 }
 
 pub struct SceneCamera {
@@ -281,20 +284,13 @@ pub struct SceneCamera {
     pub zfar: Option<f32>,
 }
 
-pub struct SceneLight {
-    pub name: Option<String>,
-    pub direction: Vec3,
-    pub color: [f32; 3],
-    pub intensity: f32,
-}
-
 pub struct GltfScene {
     pub primitives_by_mesh: Vec<Vec<GpuPrimitive>>,
     pub materials: Vec<Material>,
     pub render_nodes: Vec<RenderNode>,
     pub camera: SceneCamera,
-    pub light: SceneLight,
     pub scatter_groups: Vec<ScatterLodGroup>,
+    pub vram_texture_bytes: u64,
 }
 
 struct MipLevel {
@@ -556,7 +552,9 @@ impl GltfScene {
         for mat in doc.materials() {
             let pbr = mat.pbr_metallic_roughness();
             let base_color = pbr.base_color_factor();
-            let is_unlit = mat.unlit();
+            let is_sky = mat.name().map_or(false, |n| n.to_lowercase().contains("sky"));
+            let is_unlit = mat.unlit() || is_sky;
+            let double_sided = mat.double_sided() || is_sky;
             let alpha_cutoff = mat.alpha_cutoff().unwrap_or(0.5);
             let alpha_mode = match mat.alpha_mode() {
                 gltf::material::AlphaMode::Opaque => 0u32,
@@ -597,7 +595,7 @@ impl GltfScene {
                 alpha_mode,
                 is_unlit,
                 is_transparent,
-                mat.double_sided(),
+                double_sided,
             ));
         }
 
@@ -691,6 +689,12 @@ impl GltfScene {
                         let local_mat_idx = prim.material().index().unwrap_or(0);
                         let final_mat_idx = (mat_offset + local_mat_idx).min(materials_len - 1);
 
+                        let pos_bytes = (positions.len() * std::mem::size_of::<[f32; 3]>()) as u64;
+                        let norm_bytes = (normals.len() * std::mem::size_of::<[f32; 3]>()) as u64;
+                        let uv_bytes = (uvs.len() * std::mem::size_of::<[f32; 2]>()) as u64;
+                        let idx_bytes = indices.as_ref().map_or(0, |idx| (idx.len() * std::mem::size_of::<u32>()) as u64);
+                        let byte_size = pos_bytes + norm_bytes + uv_bytes + idx_bytes;
+
                         Some(GpuPrimitive {
                             pos_buffer: Self::create_buffer(device, "Pos", bytemuck::cast_slice(&positions), wgpu::BufferUsages::VERTEX),
                             norm_buffer: Self::create_buffer(device, "Norm", bytemuck::cast_slice(&normals), wgpu::BufferUsages::VERTEX),
@@ -701,6 +705,7 @@ impl GltfScene {
                             count,
                             material_index: final_mat_idx,
                             center,
+                            byte_size,
                         })
                     })
                     .collect();
@@ -743,11 +748,10 @@ impl GltfScene {
         device: &wgpu::Device,
         mesh_bounds: &[(Vec3, Vec3)],
         raw_by_mesh: &[Vec<RawPrimitiveData>],
-    ) -> (Vec<RenderNode>, HashMap<String, SurfaceData>, Vec<SceneCamera>, Vec<SceneLight>, (Vec3, Vec3)) {
+    ) -> (Vec<RenderNode>, HashMap<String, SurfaceData>, Vec<SceneCamera>, (Vec3, Vec3)) {
         let mut render_nodes = Vec::new();
         let mut surfaces = HashMap::new();
         let mut cameras = Vec::new();
-        let mut lights = Vec::new();
         let mut bounds_min = Vec3::splat(f32::MAX);
         let mut bounds_max = Vec3::splat(f32::MIN);
 
@@ -810,6 +814,7 @@ impl GltfScene {
                     instance_buffer,
                     instance_count: 1,
                     mesh_index,
+                    buffer_byte_size: std::mem::size_of::<InstanceRaw>() as u64,
                 });
 
                 if let Some(&(min, max)) = mesh_bounds.get(mesh_index) {
@@ -840,21 +845,6 @@ impl GltfScene {
                 });
             }
 
-            if let Some(light) = node.light() {
-                let toward_light = world_transform.transform_vector3(Vec3::Z);
-                let direction = if toward_light.length_squared() > 1e-6 {
-                    toward_light.normalize()
-                } else {
-                    Vec3::Y
-                };
-                lights.push(SceneLight {
-                    name: light.name().map(String::from).or_else(|| node_name.clone()),
-                    direction,
-                    color: light.color(),
-                    intensity: light.intensity(),
-                });
-            }
-
             for child in node.children() {
                 stack.push((child, world_transform));
             }
@@ -866,7 +856,7 @@ impl GltfScene {
             (Vec3::splat(-1.0), Vec3::splat(1.0))
         };
 
-        (render_nodes, surfaces, cameras, lights, bounds)
+        (render_nodes, surfaces, cameras, bounds)
     }
 
     fn create_fallback_camera(bounds: &(Vec3, Vec3)) -> SceneCamera {
@@ -900,21 +890,6 @@ impl GltfScene {
         } else {
             crate::telemetry::log_warn("GltfLoader", "Camera", &format!("Policy Violation: {} cameras found in glTF file. Enforcing single active camera rule using first camera.", cameras.len()));
             cameras.remove(0)
-        }
-    }
-
-    fn resolve_active_light(lights: Vec<SceneLight>) -> SceneLight {
-        if let Some(light) = lights.into_iter().next() {
-            crate::telemetry::log_info("GltfLoader", "Light", &format!("Active glTF Light: '{}' (dir: [{:.2}, {:.2}, {:.2}], intensity: {:.0})", light.name.as_deref().unwrap_or("unnamed"), light.direction.x, light.direction.y, light.direction.z, light.intensity));
-            light
-        } else {
-            crate::telemetry::log_info("GltfLoader", "Light", "No light in glTF file. Using default sun vector.");
-            SceneLight {
-                name: Some("DefaultSun".to_string()),
-                direction: Vec3::new(0.5, 1.0, -0.6).normalize(),
-                color: [1.0, 1.0, 1.0],
-                intensity: 1000.0,
-            }
         }
     }
 }
@@ -1095,15 +1070,7 @@ fn scatter_instances_on_surface(
 
         if surface.name.contains("Terrain") {
             let r_horiz = (offset_pos.x * offset_pos.x + offset_pos.z * offset_pos.z).sqrt();
-            if r_horiz >= 39.3 && r_horiz <= 48.7 {
-                continue;
-            }
-        }
-
-        if rule.name.to_lowercase().contains("tree") {
-            let cam_pos = Vec3::new(-49.7086, 1.2886, -11.5965);
-            let dist_to_cam = (offset_pos - cam_pos).length();
-            if dist_to_cam < 5.0 {
+            if r_horiz >= 40.0 && r_horiz <= 48.0 {
                 continue;
             }
         }
@@ -1387,6 +1354,7 @@ impl GltfScene {
                                 instance_buffer,
                                 instance_count: 0,
                                 mesh_index: proto_mesh_idx,
+                                buffer_byte_size: max_byte_size.max(64),
                             });
                             lod_levels.push(ScatterLodLevel {
                                 mesh_index: proto_mesh_idx,
@@ -1453,12 +1421,14 @@ impl GltfScene {
                                 rule.name, raw_transforms.len(), proto, rule.target_surface_node
                             ),
                         );
+                        let buffer_byte_size = (raw_transforms.len() * std::mem::size_of::<InstanceRaw>()) as u64;
                         render_nodes.push(RenderNode {
                             name: Some(rule.name),
                             world_transform: Mat4::IDENTITY,
                             instance_buffer,
                             instance_count: raw_transforms.len() as u32,
                             mesh_index: proto_mesh_idx,
+                            buffer_byte_size,
                         });
                     }
                     Err(e) => {
@@ -1471,7 +1441,14 @@ impl GltfScene {
         }
     }
 
-    pub fn update_lods(&mut self, queue: &wgpu::Queue, cam_pos: Vec3, aspect: f32, yfov: f32) {
+    pub fn update_lods(
+        &mut self,
+        queue: &wgpu::Queue,
+        cam_pos: Vec3,
+        aspect: f32,
+        yfov: f32,
+        frustum: Option<&Frustum>,
+    ) {
         if self.scatter_groups.is_empty() {
             return;
         }
@@ -1482,22 +1459,33 @@ impl GltfScene {
             return;
         }
 
+        let frustum_planes = frustum.map(|f| f.planes);
+
         for group in &mut self.scatter_groups {
-            if let Some((last_pos, last_asp, last_fov)) = group.last_eval_cam {
-                if last_pos.distance_squared(cam_pos) < 1e-4
+            if let Some((last_pos, last_planes, last_asp, last_fov)) = group.last_eval_cam {
+                if last_planes == frustum_planes
+                    && last_pos.distance_squared(cam_pos) < 1e-4
                     && (last_asp - aspect).abs() < 1e-4
                     && (last_fov - yfov).abs() < 1e-4
                 {
                     continue;
                 }
             }
-            group.last_eval_cam = Some((cam_pos, aspect, yfov));
+            group.last_eval_cam = Some((cam_pos, frustum_planes, aspect, yfov));
 
             let lod_count = group.lods.len();
             let mut buckets: Vec<Vec<InstanceRaw>> = vec![Vec::new(); lod_count];
             let mut culled_count = 0usize;
 
             for inst in &group.instances {
+                // 1. Frustum Culling: reject instances outside camera view frustum
+                if let Some(f) = frustum {
+                    if !f.intersects_sphere(inst.position, inst.world_radius) {
+                        culled_count += 1;
+                        continue;
+                    }
+                }
+
                 let dist = inst.position.distance(cam_pos);
                 if dist <= 1e-4 {
                     if let Some(b) = buckets.first_mut() {
@@ -1509,6 +1497,7 @@ impl GltfScene {
                 let r = inst.world_radius;
                 let coverage_pct = (std::f32::consts::PI * r * r) / (denom_factor * dist * dist) * 100.0;
 
+                // 2. Screen coverage / distance culling
                 if coverage_pct < group.cull_screen_coverage_percent {
                     culled_count += 1;
                     continue;
@@ -1568,16 +1557,71 @@ impl GltfScene {
         let gltf = gltf::Gltf::from_reader_without_validation(std::io::BufReader::new(std::fs::File::open(path)?))?;
         let buffers = gltf::import_buffers(&gltf.document, Some(base), gltf.blob)?;
         let textures = Self::process_textures(&gltf.document, Some(base), &buffers, max_tex);
+        let vram_texture_bytes: u64 = textures
+            .iter()
+            .map(|td| td.as_ref().map_or(0, |t| t.mips.iter().map(|m| m.rgba.len() as u64).sum::<u64>()))
+            .sum();
         crate::telemetry::log_info("GltfLoader", "Load", &format!("Reading glTF scene: {}", path.display()));
         let mut materials = Self::build_materials(&gltf.document, &textures, device, queue, bgl_mat, view, sampler);
         drop(textures);
         let (mut primitives_by_mesh, bounds, raw) = Self::build_primitives(&gltf.document, &buffers, 0, materials.len(), device);
-        let (mut render_nodes, surfaces, cameras, lights, aabb) = Self::build_render_nodes(&gltf.document, device, &bounds, &raw);
-        let (camera, light) = (Self::enforce_single_camera_policy(cameras, &aabb), Self::resolve_active_light(lights));
+        let (mut render_nodes, surfaces, cameras, aabb) = Self::build_render_nodes(&gltf.document, device, &bounds, &raw);
+        let camera = Self::enforce_single_camera_policy(cameras, &aabb);
         let mut scatter_groups = Vec::new();
         Self::apply_scatter_rules(scatter_cfg, base, &surfaces, &mut materials, &mut primitives_by_mesh, &mut render_nodes, &mut scatter_groups, device, queue, bgl_mat, view, sampler, max_tex);
         crate::telemetry::log_info("GltfLoader", "Init", &format!("Loaded {} meshes, {} materials, {} instances.", primitives_by_mesh.len(), materials.len(), render_nodes.len()));
-        Ok(Self { primitives_by_mesh, materials, render_nodes, camera, light, scatter_groups })
+        Ok(Self {
+            primitives_by_mesh,
+            materials,
+            render_nodes,
+            camera,
+            scatter_groups,
+            vram_texture_bytes,
+        })
+    }
+
+    pub fn total_scene_triangles(&self) -> u64 {
+        let mut total = 0u64;
+        // 1. Static base scene meshes
+        for node in &self.render_nodes {
+            if node.name.as_deref().map_or(false, |name| name.contains("_LOD")) {
+                continue;
+            }
+            if let Some(prims) = self.primitives_by_mesh.get(node.mesh_index) {
+                for prim in prims {
+                    total += (prim.count as u64 / 3) * (node.instance_count.max(1) as u64);
+                }
+            }
+        }
+        // 2. Scatter candidate instances at their base/LOD0 prototype complexity
+        for group in &self.scatter_groups {
+            let base_triangles = group.lods.first().and_then(|lod| {
+                self.primitives_by_mesh.get(lod.mesh_index).map(|prims| {
+                    prims.iter().map(|p| p.count as u64 / 3).sum::<u64>()
+                })
+            }).unwrap_or(0);
+            total += base_triangles * (group.instances.len() as u64);
+        }
+        total
+    }
+
+    pub fn total_scene_instances(&self) -> usize {
+        let scatter_total: usize = self.scatter_groups.iter().map(|g| g.instances.len()).sum();
+        let static_total = self.render_nodes.iter()
+            .filter(|n| n.name.as_deref().map_or(true, |name| !name.contains("_LOD")))
+            .count();
+        scatter_total + static_total
+    }
+
+    pub fn total_vram_geometry(&self) -> u64 {
+        let prim_bytes: u64 = self.primitives_by_mesh.iter()
+            .flat_map(|prims| prims.iter())
+            .map(|p| p.byte_size)
+            .sum();
+        let inst_bytes: u64 = self.render_nodes.iter()
+            .map(|n| n.buffer_byte_size)
+            .sum();
+        prim_bytes + inst_bytes
     }
 }
 // #endregion
